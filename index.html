@@ -28,6 +28,7 @@
 <div id="wrap">
   <div id="alphaTab"></div>
   <button id="resetBtn">Réinitialiser la mesure</button>
+  <button id="copyLogBtn">Copier les logs</button>
 </div>
 
 <div id="log">En attente d'un clic sur la portée...</div>
@@ -45,6 +46,33 @@
   });
   window.addEventListener('unhandledrejection', (e) => {
     log(`PROMESSE REJETÉE: ${e.reason}`);
+  });
+
+  document.getElementById('copyLogBtn').addEventListener('click', async () => {
+    const text = Array.from(logEl.children).map(el => el.textContent).join('\n');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        log('Logs copiés dans le presse-papiers.');
+      } else {
+        throw new Error('navigator.clipboard indisponible');
+      }
+    } catch (err) {
+      // Repli pour les contextes où l'API Clipboard est bloquée (ex: certaines webviews).
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        log('Logs copiés via le repli execCommand.');
+      } catch (err2) {
+        log(`ÉCHEC de la copie: ${err2.message}. Sélectionne et copie le texte manuellement.`);
+      }
+      document.body.removeChild(ta);
+    }
   });
 
   log(`Page chargée. Origine: ${location.origin || '(aucune - probablement file:// ou content://)'}, protocole: ${location.protocol}`);
@@ -78,12 +106,13 @@
       const map = { 4: 1, 2: 2, 1: 4, 0.5: 8 };
       const dur = map[beats] ?? 4;
       if (isRest) return `r.${dur}`;
-      return `${pitch}.${dur}`;
+      return `${pitch}.${dur}`; // pitch au format "fret.corde", ex: "0.3"
     }
 
     function buildTex() {
       const parts = measure.map(el => durationToTex(el.beats, el.type === 'rest', el.pitch));
-      return `\\title "Prototype saisie" \\tempo 100 . \\ts 4 4 :${parts.join(' ')}`;
+      // Pas de ":" avant les éléments : chaque élément porte déjà sa propre durée explicite.
+      return `\\title "Prototype saisie" \\tempo 100 . \\ts 4 4 ${parts.join(' ')}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -157,7 +186,7 @@
 
       log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : noire Do4 au début + silence du reste.`);
 
-      const newElements = [{ type: 'note', pitch: 'c4', beats: 1 }];
+      const newElements = [{ type: 'note', pitch: '0.3', beats: 1 }];
       const remaining = target.beats - 1;
       if (remaining > 0) {
         newElements.push({ type: 'rest', beats: remaining });
@@ -179,5 +208,3 @@
 
 </body>
 </html>
-prototype-saisie-note (2).html
-Affichage de prototype-saisie-note (2).html en cours...
