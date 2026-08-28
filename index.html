@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>Prototype - clic pour saisir une note (alphaTab)</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f4f4f6; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; }
+  p.note { color: #555; font-size: 14px; max-width: 640px; }
+  #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; }
+  #alphaTab { min-height: 200px; cursor: pointer; }
+  #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
+  button { margin-top: 12px; padding: 6px 14px; }
+</style>
+</head>
+<body>
+
+<h1>Prototype technique — clic pour insérer une note dans un silence</h1>
+<p class="note">
+  Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
+  Une seule mesure à 4 temps, une seule portée. Elle démarre avec un silence complet (une pause).
+  <b>Clique n'importe où sur ce silence</b> : il se casse en une noire (Do4) placée au début, suivie
+  d'un nouveau silence qui comble le reste — exactement le mécanisme de "cassage de silence" qu'on a défini,
+  version minimale (sans la règle métrique complète du remplissage automatique, pour rester simple ici).
+  Reclique sur le nouveau silence pour continuer à remplir la mesure.
+</p>
+
+<div id="wrap">
+  <div id="alphaTab"></div>
+  <button id="resetBtn">Réinitialiser la mesure</button>
+</div>
+
+<div id="log">En attente d'un clic sur la portée...</div>
+
+<script>
+  const logEl = document.getElementById('log');
+  function log(msg) {
+    const line = document.createElement('div');
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  window.addEventListener('error', (e) => {
+    log(`ERREUR GLOBALE: ${e.message} (${e.filename}:${e.lineno})`);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    log(`PROMESSE REJETÉE: ${e.reason}`);
+  });
+
+  log(`Page chargée. Origine: ${location.origin || '(aucune - probablement file:// ou content://)'}, protocole: ${location.protocol}`);
+  if (location.protocol === 'file:' || location.protocol === 'content:') {
+    log('ATTENTION: la page semble ouverte directement depuis le stockage (pas via un serveur web). alphaTab a besoin de charger un Web Worker et des fichiers de police via des requêtes réseau internes — cela échoue souvent avec ce protocole. Essaie de servir ce fichier via un petit serveur local (ex: "python3 -m http.server" puis ouvrir http://localhost:8000/prototype-saisie-note.html) plutôt que de l\'ouvrir directement.');
+  }
+
+  log('Tentative de chargement du module alphaTab depuis jsDelivr...');
+
+  (async () => {
+    let alphaTab;
+    try {
+      alphaTab = await import('https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.mjs');
+      log('Module alphaTab chargé avec succès (import ES dynamique OK).');
+    } catch (err) {
+      log(`ÉCHEC du chargement du module alphaTab: ${err && err.message ? err.message : err}`);
+      log('Cause probable : import() de module ES bloqué sous ce protocole/cette origine, ou CDN injoignable.');
+      return;
+    }
+
+    try {
+      log(`alphaTab chargé, version détectée: ${alphaTab.Environment && alphaTab.Environment.buildTimeVersion ? alphaTab.Environment.buildTimeVersion : '(inconnue)'}`);
+    } catch (e) { /* ignore, purement informatif */ }
+
+    // Durées légales qu'on utilise pour ce spike, en fractions de la mesure à 4/4 (en temps, sur 4 temps total).
+    // On modélise juste la mesure comme une liste d'éléments { type: 'rest'|'note', beats: <durée en temps> }.
+    // beats: 4 = ronde/pause, 2 = blanche/demi-pause, 1 = noire/soupir, 0.5 = croche/demi-soupir
+    let measure = [{ type: 'rest', beats: 4 }];
+
+    function durationToTex(beats, isRest, pitch) {
+      const map = { 4: 1, 2: 2, 1: 4, 0.5: 8 };
+      const dur = map[beats] ?? 4;
+      if (isRest) return `r.${dur}`;
+      return `${pitch}.${dur}`;
+    }
+
+    function buildTex() {
+      const parts = measure.map(el => durationToTex(el.beats, el.type === 'rest', el.pitch));
+      return `\\title "Prototype saisie" \\tempo 100 . \\ts 4 4 :${parts.join(' ')}`;
+    }
+
+    const element = document.getElementById('alphaTab');
+    let api;
+    try {
+      log('Création de AlphaTabApi...');
+      api = new alphaTab.AlphaTabApi(element, {
+        core: {
+          tex: true,
+          includeNoteBounds: true,
+          fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/'
+        },
+        display: {
+          staveProfile: 'Score'
+        }
+      });
+      log('AlphaTabApi créée sans exception.');
+    } catch (err) {
+      log(`ÉCHEC à la création de AlphaTabApi: ${err && err.message ? err.message : err}`);
+      return;
+    }
+
+    api.error.on((err) => {
+      log(`ÉVÉNEMENT api.error: ${err && err.message ? err.message : JSON.stringify(err)}`);
+    });
+    api.renderStarted.on(() => log('Événement: rendu démarré...'));
+    api.renderFinished.on(() => log('Événement: rendu terminé.'));
+    api.soundFontLoad && api.soundFontLoad.on && api.soundFontLoad.on(() => log('Événement: chargement soundfont...'));
+    api.scoreLoaded && api.scoreLoaded.on(() => log('Événement: score chargé (tex parsé avec succès).'));
+
+    function render() {
+      log(`Appel api.tex(...) avec: ${buildTex()}`);
+      try {
+        api.tex(buildTex());
+      } catch (err) {
+        log(`ÉCHEC pendant api.tex(): ${err && err.message ? err.message : err}`);
+      }
+    }
+
+    element.addEventListener('click', (ev) => {
+      const rect = element.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      log(`Clic détecté sur #alphaTab à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}]`);
+
+      const lookup = api.renderer.boundsLookup;
+      if (!lookup) {
+        log('boundsLookup indisponible (rendu pas encore terminé ?).');
+        return;
+      }
+
+      const beatBounds = lookup.getBeatAtPos(x, y);
+      if (!beatBounds || !beatBounds.beat) {
+        log('Aucun battement trouvé à cette position.');
+        return;
+      }
+
+      const beat = beatBounds.beat;
+      const index = beat.index;
+      const target = measure[index];
+
+      if (!target) {
+        log(`Battement d'index ${index} introuvable dans le modèle local (spike limité à une mesure).`);
+        return;
+      }
+
+      if (target.type !== 'rest') {
+        log(`Clic sur une note déjà en place (index ${index}) — sélection non gérée dans ce spike.`);
+        return;
+      }
+
+      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : noire Do4 au début + silence du reste.`);
+
+      const newElements = [{ type: 'note', pitch: 'c4', beats: 1 }];
+      const remaining = target.beats - 1;
+      if (remaining > 0) {
+        newElements.push({ type: 'rest', beats: remaining });
+      }
+
+      measure.splice(index, 1, ...newElements);
+      render();
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      measure = [{ type: 'rest', beats: 4 }];
+      render();
+      log('Mesure réinitialisée.');
+    });
+
+    render();
+  })();
+</script>
+
+</body>
+</html>
+prototype-saisie-note (2).html
+Affichage de prototype-saisie-note (2).html en cours...
