@@ -18,11 +18,13 @@
 <h1>Prototype technique — clic pour insérer une note dans un silence</h1>
 <p class="note">
   Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
-  Une seule mesure à 4 temps, une seule portée. Elle démarre avec un silence complet (une pause).
-  <b>Clique n'importe où sur ce silence</b> : il se casse en une noire (Do4) placée au début, suivie
-  d'un nouveau silence qui comble le reste — exactement le mécanisme de "cassage de silence" qu'on a défini,
-  version minimale (sans la règle métrique complète du remplissage automatique, pour rester simple ici).
-  Reclique sur le nouveau silence pour continuer à remplir la mesure.
+  Une seule mesure à 4 temps, une seule portée en clé de sol. Elle démarre avec un silence complet (une pause).
+  <b>Clique n'importe où sur ce silence</b> : la hauteur de la note dépend de l'endroit où tu cliques
+  <b>verticalement</b> sur la portée (essaie de cliquer en haut vs en bas). Le silence se casse en une note
+  de la hauteur déduite, placée au début, suivie d'un nouveau silence qui comble le reste — le mécanisme de
+  "cassage de silence" qu'on a défini, version minimale (règle métrique complète du remplissage automatique
+  pas encore implémentée, pour rester simple ici). Reclique sur le nouveau silence pour continuer à remplir
+  la mesure. Limite connue de ce spike : clé de sol fixe, pas de détection de clé dynamique.
 </p>
 
 <div id="wrap">
@@ -106,13 +108,15 @@
       const map = { 4: 1, 2: 2, 1: 4, 0.5: 8 };
       const dur = map[beats] ?? 4;
       if (isRest) return `r.${dur}`;
-      return `${pitch}.${dur}`; // pitch au format "fret.corde", ex: "0.3"
+      return `${pitch}.${dur}`; // pitch au format nom de note, ex: "C4"
     }
 
     function buildTex() {
       const parts = measure.map(el => durationToTex(el.beats, el.type === 'rest', el.pitch));
       // Pas de ":" avant les éléments : chaque élément porte déjà sa propre durée explicite.
-      return `\\title "Prototype saisie" \\tempo 100 . \\ts 4 4 ${parts.join(' ')}`;
+      // \tuning piano + \instrument déclarent le track comme "pitched" (pas fretté) pour pouvoir
+      // utiliser des noms de note (C4, D4...) plutôt que le format frette.corde.
+      return `\\title "Prototype saisie" \\tempo 100 . \\track "Piano" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${parts.join(' ')}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -152,18 +156,22 @@
       }
     }
 
-    // Log de diagnostic brut sur le clic (coordonnées + disponibilité de boundsLookup),
-    // gardé uniquement à titre informatif — ce n'est PLUS ce qu'on utilise pour agir.
-    element.addEventListener('click', (ev) => {
-      const rect = element.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      log(`[diag] Clic brut à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}]. api.boundsLookup disponible: ${!!api.boundsLookup}`);
-    });
+    // Mapping position verticale -> note, pour une portée en clé de sol (Fa5 en haut, Mi4 en bas,
+    // 8 positions diatoniques réparties entre la 1ère ligne et la dernière ligne de la portée).
+    // Simplification assumée pour ce spike : clé de sol fixe, pas de détection de clé dynamique.
+    const TREBLE_STEPS_TOP_TO_BOTTOM = ['F5', 'E5', 'D5', 'C5', 'B4', 'A4', 'G4', 'F4', 'E4'];
 
-    function handleBeatTargeted(beat) {
+    function pitchFromY(y, staffBounds) {
+      if (!staffBounds || !staffBounds.h) return 'C4';
+      const relative = (y - staffBounds.y) / staffBounds.h;
+      const clamped = Math.max(0, Math.min(1, relative));
+      const stepIndex = Math.round(clamped * (TREBLE_STEPS_TOP_TO_BOTTOM.length - 1));
+      return TREBLE_STEPS_TOP_TO_BOTTOM[stepIndex];
+    }
+
+    function handleBeatTargeted(beat, pitch) {
       if (!beat) {
-        log('Aucun battement trouvé à cette position (event beatMouseUp avec beat=null).');
+        log('Aucun battement trouvé à cette position.');
         return;
       }
 
@@ -180,9 +188,9 @@
         return;
       }
 
-      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : noire au début + silence du reste.`);
+      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : note ${pitch} au début + silence du reste.`);
 
-      const newElements = [{ type: 'note', pitch: '0.3', beats: 1 }];
+      const newElements = [{ type: 'note', pitch, beats: 1 }];
       const remaining = target.beats - 1;
       if (remaining > 0) {
         newElements.push({ type: 'rest', beats: remaining });
@@ -192,10 +200,31 @@
       render();
     }
 
-    // Événement natif alphaTab : donne directement le Beat visé, sans calcul manuel de coordonnées.
-    api.beatMouseUp.on((beat) => {
-      log(`Événement api.beatMouseUp reçu (beat: ${beat ? 'trouvé' : 'null'}).`);
-      handleBeatTargeted(beat);
+    // Point d'entrée unique : un seul appel à boundsLookup nous donne à la fois le battement visé
+    // ET la géométrie de la portée à cet endroit (pour en déduire la hauteur cliquée).
+    element.addEventListener('click', (ev) => {
+      const rect = element.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      log(`Clic à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}].`);
+
+      const lookup = api.boundsLookup;
+      if (!lookup) {
+        log('api.boundsLookup indisponible (rendu pas encore terminé ?).');
+        return;
+      }
+
+      const beatBounds = lookup.getBeatAtPos(x, y);
+      if (!beatBounds || !beatBounds.beat) {
+        log('Aucun battement trouvé à cette position.');
+        return;
+      }
+
+      const staffBounds = beatBounds.visualBounds || beatBounds.realBounds;
+      const pitch = pitchFromY(y, staffBounds);
+      log(`Battement trouvé. Portée y=[${Math.round(staffBounds.y)}..${Math.round(staffBounds.y + staffBounds.h)}], hauteur déduite: ${pitch}.`);
+
+      handleBeatTargeted(beatBounds.beat, pitch);
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
