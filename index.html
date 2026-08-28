@@ -152,25 +152,21 @@
       }
     }
 
+    // Log de diagnostic brut sur le clic (coordonnées + disponibilité de boundsLookup),
+    // gardé uniquement à titre informatif — ce n'est PLUS ce qu'on utilise pour agir.
     element.addEventListener('click', (ev) => {
       const rect = element.getBoundingClientRect();
       const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
-      log(`Clic détecté sur #alphaTab à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}]`);
+      log(`[diag] Clic brut à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}]. api.boundsLookup disponible: ${!!api.boundsLookup}`);
+    });
 
-      const lookup = api.renderer.boundsLookup;
-      if (!lookup) {
-        log('boundsLookup indisponible (rendu pas encore terminé ?).');
+    function handleBeatTargeted(beat) {
+      if (!beat) {
+        log('Aucun battement trouvé à cette position (event beatMouseUp avec beat=null).');
         return;
       }
 
-      const beatBounds = lookup.getBeatAtPos(x, y);
-      if (!beatBounds || !beatBounds.beat) {
-        log('Aucun battement trouvé à cette position.');
-        return;
-      }
-
-      const beat = beatBounds.beat;
       const index = beat.index;
       const target = measure[index];
 
@@ -184,7 +180,7 @@
         return;
       }
 
-      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : noire Do4 au début + silence du reste.`);
+      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : noire au début + silence du reste.`);
 
       const newElements = [{ type: 'note', pitch: '0.3', beats: 1 }];
       const remaining = target.beats - 1;
@@ -194,6 +190,12 @@
 
       measure.splice(index, 1, ...newElements);
       render();
+    }
+
+    // Événement natif alphaTab : donne directement le Beat visé, sans calcul manuel de coordonnées.
+    api.beatMouseUp.on((beat) => {
+      log(`Événement api.beatMouseUp reçu (beat: ${beat ? 'trouvé' : 'null'}).`);
+      handleBeatTargeted(beat);
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
