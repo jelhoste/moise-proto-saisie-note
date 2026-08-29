@@ -11,6 +11,10 @@
   #alphaTab { min-height: 200px; cursor: pointer; }
   #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
   button { margin-top: 12px; padding: 6px 14px; }
+  #durationPalette { margin-top: 12px; }
+  .paletteLabel { font-size: 13px; color: #555; margin-right: 4px; }
+  .durBtn { margin: 0 4px 0 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
+  .durBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
 </style>
 </head>
 <body>
@@ -19,19 +23,28 @@
 <p class="note">
   Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
   Une seule mesure à 4 temps, une seule portée en clé de sol. Elle démarre avec un silence complet (une pause).
-  <b>Clique n'importe où sur ce silence</b> : la hauteur de la note dépend de l'endroit où tu cliques
-  <b>verticalement</b> sur la portée (essaie de cliquer en haut vs en bas). Le silence se casse en une note
-  de la hauteur déduite, placée au début, suivie d'un nouveau silence qui comble le reste — le mécanisme de
-  "cassage de silence" qu'on a défini, version minimale (règle métrique complète du remplissage automatique
-  pas encore implémentée, pour rester simple ici). Reclique sur le nouveau silence pour continuer à remplir
-  la mesure. Limite connue de ce spike : clé de sol fixe, pas de détection de clé dynamique.
+  <b>Choisis d'abord une durée</b> ci-dessous, puis <b>clique n'importe où sur un silence</b> : la hauteur de
+  la note dépend de l'endroit où tu cliques verticalement sur la portée (au-dessus/en-dessous de la portée
+  fonctionne aussi désormais, lignes supplémentaires comprises). Le silence se casse en une note de la durée
+  choisie et de la hauteur déduite, suivie des silences légaux nécessaires pour compléter la mesure — la vraie
+  règle métrique de remplissage automatique qu'on a définie. Limite connue de ce spike : clé de sol fixe, pas
+  de détection de clé dynamique.
 </p>
 
 <div id="wrap">
   <div id="alphaTab"></div>
+  <div id="durationPalette">
+    <span class="paletteLabel">Durée : </span>
+    <button class="durBtn" data-beats="4">Ronde</button>
+    <button class="durBtn" data-beats="2">Blanche</button>
+    <button class="durBtn active" data-beats="1">Noire</button>
+    <button class="durBtn" data-beats="0.5">Croche</button>
+    <button class="durBtn" data-beats="0.25">Double-croche</button>
+  </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
   <button id="copyLogBtn">Copier les logs</button>
 </div>
+
 
 <div id="log">En attente d'un clic sur la portée...</div>
 
@@ -244,9 +257,9 @@
       }
 
       const startPos = startPositionOf(index);
-      // Durée de la note insérée : une noire par défaut (pas encore de palette de durée dans ce spike),
-      // mais on ne dépasse jamais la taille du silence ciblé s'il est plus court qu'une noire.
-      const noteDuration = Math.min(1, target.beats);
+      // Durée de la note insérée : celle choisie dans la palette, sans jamais dépasser la taille
+      // du silence ciblé (on ne peut pas insérer une ronde dans un silence d'1 temps).
+      const noteDuration = Math.min(selectedDuration, target.beats);
       const remaining = target.beats - noteDuration;
       const restBreakdown = legalRestBreakdown(remaining, startPos + noteDuration);
 
@@ -296,6 +309,16 @@
       measure = [{ type: 'rest', beats: 4 }];
       render();
       log('Mesure réinitialisée.');
+    });
+
+    let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
+    document.querySelectorAll('.durBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedDuration = parseFloat(btn.dataset.beats);
+        document.querySelectorAll('.durBtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        log(`Durée sélectionnée: ${btn.textContent} (${selectedDuration} temps).`);
+      });
     });
 
     render();
