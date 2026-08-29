@@ -22,13 +22,12 @@
 <h1>Prototype technique — clic pour insérer une note dans un silence</h1>
 <p class="note">
   Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
-  Une seule mesure à 4 temps, une seule portée en clé de sol. Elle démarre avec un silence complet (une pause).
-  <b>Choisis d'abord une durée</b> ci-dessous, puis <b>clique n'importe où sur un silence</b> : la hauteur de
-  la note dépend de l'endroit où tu cliques verticalement sur la portée (au-dessus/en-dessous de la portée
-  fonctionne aussi désormais, lignes supplémentaires comprises). Le silence se casse en une note de la durée
-  choisie et de la hauteur déduite, suivie des silences légaux nécessaires pour compléter la mesure — la vraie
-  règle métrique de remplissage automatique qu'on a définie. Limite connue de ce spike : clé de sol fixe, pas
-  de détection de clé dynamique.
+  <b>Deux mesures</b> à 4 temps, une seule portée en clé de sol. <b>Choisis d'abord une durée</b> ci-dessous,
+  puis <b>clique n'importe où sur un silence</b>. Pour tester le débordement (cas 3 de la règle qu'on a
+  définie) : remplis presque toute la 1ère mesure, puis choisis une durée trop longue pour ce qui reste —
+  la note doit se scinder automatiquement en deux notes liées, à cheval sur la mesure suivante. Si le même
+  essai est fait sur la dernière mesure du morceau, ça doit être rejeté (rien ne se place). Limite connue
+  de ce spike : clé de sol fixe, pas de détection de clé dynamique.
 </p>
 
 <div id="wrap">
@@ -112,27 +111,30 @@
       log(`alphaTab chargé, version détectée: ${alphaTab.Environment && alphaTab.Environment.buildTimeVersion ? alphaTab.Environment.buildTimeVersion : '(inconnue)'}`);
     } catch (e) { /* ignore, purement informatif */ }
 
-    // Durées légales qu'on utilise pour ce spike, en fractions de la mesure à 4/4 (en temps, sur 4 temps total).
-    // On modélise juste la mesure comme une liste d'éléments { type: 'rest'|'note', beats: <durée en temps> }.
-    // beats: 4 = ronde/pause, 2 = blanche/demi-pause, 1 = noire/soupir, 0.5 = croche/demi-soupir
-    let measure = [{ type: 'rest', beats: 4 }];
+    // Deux mesures maintenant (au lieu d'une seule) : indispensable pour tester le débordement
+    // d'une note sur la mesure suivante. measures[i] est un tableau d'éléments comme avant.
+    let measures = [
+      [{ type: 'rest', beats: 4 }],
+      [{ type: 'rest', beats: 4 }]
+    ];
+    const MEASURE_BEATS = 4;
 
-    function durationToTex(beats, isRest, pitch) {
+    function elementToTex(el) {
       const map = { 4: 1, 2: 2, 1: 4, 0.5: 8, 0.25: 16 };
-      const dur = map[beats];
+      const dur = map[el.beats];
       if (dur === undefined) {
-        log(`ALERTE modèle: durée ${beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
+        log(`ALERTE modèle: durée ${el.beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
       }
-      if (isRest) return `r.${dur ?? 4}`;
-      return `${pitch}.${dur ?? 4}`; // pitch au format nom de note, ex: "C4"
+      if (el.type === 'rest') return `r.${dur ?? 4}`;
+      const tieSuffix = el.tied ? '{t}' : ''; // note liée à la précédente (débordement de mesure)
+      return `${el.pitch}.${dur ?? 4}${tieSuffix}`;
     }
 
     function buildTex() {
-      const parts = measure.map(el => durationToTex(el.beats, el.type === 'rest', el.pitch));
-      // Pas de ":" avant les éléments : chaque élément porte déjà sa propre durée explicite.
+      const barsTex = measures.map(m => m.map(elementToTex).join(' ')).join(' | ');
       // \tuning piano + \instrument déclarent le track comme "pitched" (pas fretté) pour pouvoir
       // utiliser des noms de note (C4, D4...) plutôt que le format frette.corde.
-      return `\\title "Prototype saisie" \\tempo 100 . \\track "Piano" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${parts.join(' ')}`;
+      return `\\title "Prototype saisie" \\tempo 100 . \\track "Piano" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${barsTex}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -231,62 +233,101 @@
       return result;
     }
 
-    function startPositionOf(index) {
+    function startPositionOf(measureArr, index) {
       let pos = 0;
-      for (let i = 0; i < index; i++) pos += measure[i].beats;
+      for (let i = 0; i < index; i++) pos += measureArr[i].beats;
       return pos;
     }
 
     // Les silences "auto" ne sont pas des blocs figés : tant qu'ils n'ont pas été remplacés par une
     // note, plusieurs silences consécutifs restent fusionnables en un seul pool d'espace disponible.
-    // On calcule ici combien de temps est réellement libre à partir de l'index cliqué, en fusionnant
-    // tous les silences contigus qui suivent — pas seulement la taille du fragment sur lequel on a cliqué.
-    function contiguousRestSpan(index) {
+    function contiguousRestSpan(measureArr, index) {
       let total = 0;
       let i = index;
-      while (i < measure.length && measure[i].type === 'rest') {
-        total += measure[i].beats;
+      while (i < measureArr.length && measureArr[i].type === 'rest') {
+        total += measureArr[i].beats;
         i++;
       }
       return { totalBeats: total, endIndexExclusive: i };
     }
 
-    function handleBeatTargeted(beat, pitch) {
-      if (!beat) {
-        log('Aucun battement trouvé à cette position.');
+    function placeNoteAt(measureIndex, localIndex, duration, pitch) {
+      const currentMeasure = measures[measureIndex];
+      if (!currentMeasure) {
+        log(`Mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
       }
-
-      const index = beat.index;
-      const target = measure[index];
-
+      const target = currentMeasure[localIndex];
       if (!target) {
-        log(`Battement d'index ${index} introuvable dans le modèle local (spike limité à une mesure).`);
+        log(`Battement d'index ${localIndex} introuvable dans la mesure ${measureIndex}.`);
         return;
       }
-
       if (target.type !== 'rest') {
-        log(`Clic sur une note déjà en place (index ${index}) — sélection non gérée dans ce spike.`);
+        log(`Clic sur une note déjà en place (mesure ${measureIndex}, index ${localIndex}) — sélection non gérée dans ce spike.`);
         return;
       }
 
-      const startPos = startPositionOf(index);
-      const { totalBeats: availableBeats, endIndexExclusive } = contiguousRestSpan(index);
-      // Durée de la note insérée : celle choisie dans la palette, plafonnée par l'espace CONTIGU
-      // réellement disponible (fusion des silences auto qui suivent), pas juste le fragment cliqué.
-      const noteDuration = Math.min(selectedDuration, availableBeats);
-      const remaining = availableBeats - noteDuration;
-      const restBreakdown = legalRestBreakdown(remaining, startPos + noteDuration);
-      const mergedCount = endIndexExclusive - index;
+      const startPos = startPositionOf(currentMeasure, localIndex);
+      const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(currentMeasure, localIndex);
 
-      log(`Silence ciblé (index ${index}, position ${startPos}) — espace contigu disponible: ${availableBeats} temps (${mergedCount} fragment(s) fusionné(s)) → note ${pitch} (${noteDuration} temps) + silences: [${restBreakdown.join(', ')}]`);
+      // --- Cas normal : la durée choisie tient dans l'espace contigu disponible, pas de débordement ---
+      if (duration <= availableInMeasure + EPS) {
+        const remaining = availableInMeasure - duration;
+        const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
+        const mergedCount = endIndexExclusive - localIndex;
+        log(`Silence ciblé (mesure ${measureIndex}, index ${localIndex}, position ${startPos}) — espace contigu: ${availableInMeasure} → note ${pitch} (${duration}) + silences [${restBreakdown.join(', ')}]`);
+        const newElements = [{ type: 'note', pitch, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
+        currentMeasure.splice(localIndex, mergedCount, ...newElements);
+        render();
+        return;
+      }
 
-      const newElements = [
-        { type: 'note', pitch, beats: noteDuration },
-        ...restBreakdown.map(beats => ({ type: 'rest', beats }))
-      ];
+      // --- Débordement nécessaire : on détermine dans lequel des 3 cas on se trouve ---
+      const reachesEndOfMeasure = (startPos + availableInMeasure) >= MEASURE_BEATS - EPS;
 
-      measure.splice(index, mergedCount, ...newElements);
+      if (!reachesEndOfMeasure) {
+        // Cas 1 : obstacle = une note déjà présente plus loin dans la même mesure.
+        log(`REJET — durée ${duration} demandée mais un obstacle (note déjà présente) bloque avant la fin de la mesure ${measureIndex} (espace dispo: ${availableInMeasure}).`);
+        return;
+      }
+
+      const isLastMeasure = measureIndex === measures.length - 1;
+      if (isLastMeasure) {
+        // Cas 2 : fin de la dernière mesure du morceau, rien après pour déborder.
+        log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure du morceau.`);
+        return;
+      }
+
+      // Cas 3 : une mesure suivante existe -> scission en notes liées, plafonnée à 1 mesure de plus.
+      const nextMeasure = measures[measureIndex + 1];
+      const part2Total = duration - availableInMeasure;
+
+      if (part2Total > MEASURE_BEATS + EPS) {
+        log(`REJET — le débordement nécessiterait plus d'une mesure suivante (${part2Total} temps demandés en mesure suivante) — plafonné à 1 mesure.`);
+        return;
+      }
+
+      const nextSpan = contiguousRestSpan(nextMeasure, 0);
+      if (nextSpan.totalBeats < part2Total - EPS) {
+        log(`REJET — pas assez de place en tout début de la mesure suivante (besoin ${part2Total}, disponible ${nextSpan.totalBeats}).`);
+        return;
+      }
+
+      // Décomposition en fragments légaux liés, de part et d'autre de la frontière de mesure.
+      const part1Durations = legalRestBreakdown(availableInMeasure, startPos);
+      const part2Durations = legalRestBreakdown(part2Total, 0);
+      const allDurations = [...part1Durations, ...part2Durations];
+      const tiedNotes = allDurations.map((beats, i) => ({ type: 'note', pitch, beats, tied: i > 0 }));
+
+      log(`DÉBORDEMENT (cas 3) — note ${pitch} de ${duration} temps scindée en [${allDurations.join(' + ')}] liée(s), à cheval mesures ${measureIndex}→${measureIndex + 1}.`);
+
+      const mergedCount = endIndexExclusive - localIndex;
+      currentMeasure.splice(localIndex, mergedCount, ...tiedNotes.slice(0, part1Durations.length));
+
+      const remainingInNext = nextSpan.totalBeats - part2Total;
+      const nextRestBreakdown = legalRestBreakdown(remainingInNext, part2Total);
+      nextMeasure.splice(0, nextSpan.endIndexExclusive, ...tiedNotes.slice(part1Durations.length), ...nextRestBreakdown.map(b => ({ type: 'rest', beats: b })));
+
       render();
     }
 
@@ -307,24 +348,37 @@
         return;
       }
 
+      // Hypothèse à vérifier en pratique : beat.voice.bar.index donne la mesure, beat.index la
+      // position DANS cette mesure. Avec une seule mesure avant, impossible de distinguer "local à
+      // la mesure" de "global au morceau" — avec deux mesures maintenant, ce log va nous le confirmer.
+      let measureIndex = 0;
+      try {
+        if (beat.voice && beat.voice.bar && typeof beat.voice.bar.index === 'number') {
+          measureIndex = beat.voice.bar.index;
+        }
+      } catch (e) { /* on garde measureIndex=0 par défaut */ }
+      log(`[diag] beat.index=${beat.index}, beat.voice?.bar?.index=${measureIndex}`);
+
       let pitch = 'C4';
       const lookup = api.boundsLookup;
       const bounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
       if (bounds) {
         const b = bounds.visualBounds || bounds.realBounds;
-        log(`Bounds du battement trouvées: y=${Math.round(b.y)}..${Math.round(b.y + b.h)}. lastPointerY=${lastPointerY}`);
         pitch = pitchFromY(lastPointerY, b);
       } else {
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      handleBeatTargeted(beat, pitch);
+      placeNoteAt(measureIndex, beat.index, selectedDuration, pitch);
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
-      measure = [{ type: 'rest', beats: 4 }];
+      measures = [
+        [{ type: 'rest', beats: 4 }],
+        [{ type: 'rest', beats: 4 }]
+      ];
       render();
-      log('Mesure réinitialisée.');
+      log('Mesures réinitialisées.');
     });
 
     let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
