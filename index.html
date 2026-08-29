@@ -200,31 +200,35 @@
       render();
     }
 
-    // Point d'entrée unique : un seul appel à boundsLookup nous donne à la fois le battement visé
-    // ET la géométrie de la portée à cet endroit (pour en déduire la hauteur cliquée).
-    element.addEventListener('click', (ev) => {
+    // Point d'entrée : on capture la position Y au moment où le doigt/la souris se pose (pointerdown),
+    // AVANT que l'événement natif beatMouseUp ne se déclenche, pour être sûr d'avoir la valeur prête à temps.
+    let lastPointerY = null;
+    element.addEventListener('pointerdown', (ev) => {
       const rect = element.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      log(`Clic à (${Math.round(x)}, ${Math.round(y)}) [rect: ${Math.round(rect.width)}x${Math.round(rect.height)}].`);
+      lastPointerY = ev.clientY - rect.top;
+      log(`[diag] pointerdown à y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
+    });
 
+    // Identification du battement : on utilise l'événement natif beatMouseUp (fiable, déjà validé),
+    // plutôt que getBeatAtPos(x,y) qui a un souci d'échelle de coordonnées non résolu.
+    api.beatMouseUp.on((beat) => {
+      if (!beat) {
+        log('Événement beatMouseUp: aucun battement (clic en dehors de toute portée).');
+        return;
+      }
+
+      let pitch = 'C4';
       const lookup = api.boundsLookup;
-      if (!lookup) {
-        log('api.boundsLookup indisponible (rendu pas encore terminé ?).');
-        return;
+      const bounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
+      if (bounds) {
+        const b = bounds.visualBounds || bounds.realBounds;
+        log(`Bounds du battement trouvées: y=${Math.round(b.y)}..${Math.round(b.y + b.h)}. lastPointerY=${lastPointerY}`);
+        pitch = pitchFromY(lastPointerY, b);
+      } else {
+        log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      const beatBounds = lookup.getBeatAtPos(x, y);
-      if (!beatBounds || !beatBounds.beat) {
-        log('Aucun battement trouvé à cette position.');
-        return;
-      }
-
-      const staffBounds = beatBounds.visualBounds || beatBounds.realBounds;
-      const pitch = pitchFromY(y, staffBounds);
-      log(`Battement trouvé. Portée y=[${Math.round(staffBounds.y)}..${Math.round(staffBounds.y + staffBounds.h)}], hauteur déduite: ${pitch}.`);
-
-      handleBeatTargeted(beatBounds.beat, pitch);
+      handleBeatTargeted(beat, pitch);
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
