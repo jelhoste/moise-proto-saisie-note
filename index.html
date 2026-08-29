@@ -159,6 +159,17 @@
 
     api.error.on((err) => {
       log(`ÉVÉNEMENT api.error: ${err && err.message ? err.message : JSON.stringify(err)}`);
+      // Le message générique renvoie vers une "erreur interne" — on l'affiche explicitement ici,
+      // plutôt que de deviner la cause exacte du parsing échoué.
+      const inner = err && (err.innerError || err.cause || err.error);
+      if (inner) {
+        log(`  ↳ erreur interne: ${inner.message || JSON.stringify(inner)}`);
+      }
+      try {
+        log(`  ↳ err complet (toutes propriétés): ${JSON.stringify(err, Object.getOwnPropertyNames(err))}`);
+      } catch (e) {
+        log(`  ↳ err non sérialisable: ${String(err)}`);
+      }
     });
     api.renderStarted.on(() => log('Événement: rendu démarré...'));
     api.renderFinished.on(() => log('Événement: rendu terminé.'));
