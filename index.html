@@ -159,17 +159,36 @@
       }
     }
 
-    // Mapping position verticale -> note, pour une portée en clé de sol (Fa5 en haut, Mi4 en bas,
-    // 8 positions diatoniques réparties entre la 1ère ligne et la dernière ligne de la portée).
+    // Mapping position verticale -> note, pour une portée en clé de sol.
     // Simplification assumée pour ce spike : clé de sol fixe, pas de détection de clé dynamique.
-    const TREBLE_STEPS_TOP_TO_BOTTOM = ['F5', 'E5', 'D5', 'C5', 'B4', 'A4', 'G4', 'F4', 'E4'];
+    // On construit une plage diatonique large (plusieurs octaves) avec la vraie numérotation
+    // d'octave (qui change au Do, pas tous les 7 pas) pour pouvoir représenter les lignes
+    // supplémentaires au-dessus/en-dessous de la portée, pas seulement les 5 lignes visibles.
+    const NOTE_LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    function buildDiatonicRange(minOct, maxOct) {
+      const arr = [];
+      for (let oct = minOct; oct <= maxOct; oct++) {
+        for (const letter of NOTE_LETTERS) arr.push(letter + oct);
+      }
+      return arr;
+    }
+    const DIATONIC_RANGE = buildDiatonicRange(1, 8);
+    const F5_INDEX = DIATONIC_RANGE.indexOf('F5'); // référence : ligne du haut de la portée en clé de sol
+
+    function noteAtStep(stepIndex) {
+      // stepIndex = 0 -> F5 (ligne du haut), stepIndex croissant = on descend en hauteur.
+      const idx = Math.max(0, Math.min(DIATONIC_RANGE.length - 1, F5_INDEX - stepIndex));
+      return DIATONIC_RANGE[idx];
+    }
 
     function pitchFromY(y, staffBounds) {
       if (!staffBounds || !staffBounds.h) return 'C4';
-      const relative = (y - staffBounds.y) / staffBounds.h;
-      const clamped = Math.max(0, Math.min(1, relative));
-      const stepIndex = Math.round(clamped * (TREBLE_STEPS_TOP_TO_BOTTOM.length - 1));
-      return TREBLE_STEPS_TOP_TO_BOTTOM[stepIndex];
+      // staffBounds.h correspond à l'écart entre la ligne du haut et la ligne du bas (4 espaces =
+      // 8 demi-pas diatoniques). On NE clampe PLUS entre 0 et 1 : un clic au-dessus ou en-dessous
+      // de la portée donne un stepIndex négatif ou > 8, qui continue sur les lignes supplémentaires.
+      const stepPerUnit = 8 / staffBounds.h;
+      const stepIndex = Math.round((y - staffBounds.y) * stepPerUnit);
+      return noteAtStep(stepIndex);
     }
 
     // Règle métrique de remplissage automatique : à chaque étape, on choisit la plus longue durée
