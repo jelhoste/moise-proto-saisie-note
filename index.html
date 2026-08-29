@@ -105,10 +105,13 @@
     let measure = [{ type: 'rest', beats: 4 }];
 
     function durationToTex(beats, isRest, pitch) {
-      const map = { 4: 1, 2: 2, 1: 4, 0.5: 8 };
-      const dur = map[beats] ?? 4;
-      if (isRest) return `r.${dur}`;
-      return `${pitch}.${dur}`; // pitch au format nom de note, ex: "C4"
+      const map = { 4: 1, 2: 2, 1: 4, 0.5: 8, 0.25: 16 };
+      const dur = map[beats];
+      if (dur === undefined) {
+        log(`ALERTE modèle: durée ${beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
+      }
+      if (isRest) return `r.${dur ?? 4}`;
+      return `${pitch}.${dur ?? 4}`; // pitch au format nom de note, ex: "C4"
     }
 
     function buildTex() {
@@ -169,6 +172,39 @@
       return TREBLE_STEPS_TOP_TO_BOTTOM[stepIndex];
     }
 
+    // Règle métrique de remplissage automatique : à chaque étape, on choisit la plus longue durée
+    // légale qui (a) tient dans l'espace restant et (b) commence à une position métriquement valide
+    // pour cette durée (ex: une blanche/demi-pause ne peut démarrer qu'en position 0 ou 2 sur une
+    // mesure à 4/4 — jamais en position 1 ou 3). C'est exactement la règle qu'on a définie dans la
+    // feuille de route, appliquée ici en vrai plutôt qu'en un seul silence approximatif.
+    const LEGAL_DURATIONS_DESC = [4, 2, 1, 0.5, 0.25]; // en temps (ronde, blanche, noire, croche, double-croche)
+    const EPS = 1e-6;
+
+    function legalRestBreakdown(remainingBeats, startPos) {
+      const result = [];
+      let pos = startPos;
+      let remaining = remainingBeats;
+      let safety = 0;
+      while (remaining > EPS && safety < 100) {
+        safety++;
+        const chosen = LEGAL_DURATIONS_DESC.find(d => d <= remaining + EPS && Math.abs(pos % d) < EPS);
+        if (!chosen) {
+          log(`ALERTE algorithme: aucune durée légale trouvée pour pos=${pos}, remaining=${remaining} — filet de sécurité déclenché.`);
+          break;
+        }
+        result.push(chosen);
+        pos += chosen;
+        remaining -= chosen;
+      }
+      return result;
+    }
+
+    function startPositionOf(index) {
+      let pos = 0;
+      for (let i = 0; i < index; i++) pos += measure[i].beats;
+      return pos;
+    }
+
     function handleBeatTargeted(beat, pitch) {
       if (!beat) {
         log('Aucun battement trouvé à cette position.');
@@ -188,13 +224,19 @@
         return;
       }
 
-      log(`Silence ciblé (index ${index}, ${target.beats} temps) → cassage : note ${pitch} au début + silence du reste.`);
+      const startPos = startPositionOf(index);
+      // Durée de la note insérée : une noire par défaut (pas encore de palette de durée dans ce spike),
+      // mais on ne dépasse jamais la taille du silence ciblé s'il est plus court qu'une noire.
+      const noteDuration = Math.min(1, target.beats);
+      const remaining = target.beats - noteDuration;
+      const restBreakdown = legalRestBreakdown(remaining, startPos + noteDuration);
 
-      const newElements = [{ type: 'note', pitch, beats: 1 }];
-      const remaining = target.beats - 1;
-      if (remaining > 0) {
-        newElements.push({ type: 'rest', beats: remaining });
-      }
+      log(`Silence ciblé (index ${index}, position ${startPos}, ${target.beats} temps) → note ${pitch} (${noteDuration} temps) + silences: [${restBreakdown.join(', ')}]`);
+
+      const newElements = [
+        { type: 'note', pitch, beats: noteDuration },
+        ...restBreakdown.map(beats => ({ type: 'rest', beats }))
+      ];
 
       measure.splice(index, 1, ...newElements);
       render();
