@@ -237,6 +237,20 @@
       return pos;
     }
 
+    // Les silences "auto" ne sont pas des blocs figés : tant qu'ils n'ont pas été remplacés par une
+    // note, plusieurs silences consécutifs restent fusionnables en un seul pool d'espace disponible.
+    // On calcule ici combien de temps est réellement libre à partir de l'index cliqué, en fusionnant
+    // tous les silences contigus qui suivent — pas seulement la taille du fragment sur lequel on a cliqué.
+    function contiguousRestSpan(index) {
+      let total = 0;
+      let i = index;
+      while (i < measure.length && measure[i].type === 'rest') {
+        total += measure[i].beats;
+        i++;
+      }
+      return { totalBeats: total, endIndexExclusive: i };
+    }
+
     function handleBeatTargeted(beat, pitch) {
       if (!beat) {
         log('Aucun battement trouvé à cette position.');
@@ -257,20 +271,22 @@
       }
 
       const startPos = startPositionOf(index);
-      // Durée de la note insérée : celle choisie dans la palette, sans jamais dépasser la taille
-      // du silence ciblé (on ne peut pas insérer une ronde dans un silence d'1 temps).
-      const noteDuration = Math.min(selectedDuration, target.beats);
-      const remaining = target.beats - noteDuration;
+      const { totalBeats: availableBeats, endIndexExclusive } = contiguousRestSpan(index);
+      // Durée de la note insérée : celle choisie dans la palette, plafonnée par l'espace CONTIGU
+      // réellement disponible (fusion des silences auto qui suivent), pas juste le fragment cliqué.
+      const noteDuration = Math.min(selectedDuration, availableBeats);
+      const remaining = availableBeats - noteDuration;
       const restBreakdown = legalRestBreakdown(remaining, startPos + noteDuration);
+      const mergedCount = endIndexExclusive - index;
 
-      log(`Silence ciblé (index ${index}, position ${startPos}, ${target.beats} temps) → note ${pitch} (${noteDuration} temps) + silences: [${restBreakdown.join(', ')}]`);
+      log(`Silence ciblé (index ${index}, position ${startPos}) — espace contigu disponible: ${availableBeats} temps (${mergedCount} fragment(s) fusionné(s)) → note ${pitch} (${noteDuration} temps) + silences: [${restBreakdown.join(', ')}]`);
 
       const newElements = [
         { type: 'note', pitch, beats: noteDuration },
         ...restBreakdown.map(beats => ({ type: 'rest', beats }))
       ];
 
-      measure.splice(index, 1, ...newElements);
+      measure.splice(index, mergedCount, ...newElements);
       render();
     }
 
