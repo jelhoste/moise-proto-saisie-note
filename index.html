@@ -39,6 +39,7 @@
     <button class="durBtn active" data-beats="1">Noire</button>
     <button class="durBtn" data-beats="0.5">Croche</button>
     <button class="durBtn" data-beats="0.25">Double-croche</button>
+    <label style="margin-left:10px; font-size:13px;"><input type="checkbox" id="tripletToggle"> Triolet (place un groupe de 3)</label>
   </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
@@ -218,17 +219,23 @@
 
     function buildTex() {
       let currentDurCode = null;
+      let currentTupletKey = null; // null hors triolet, sinon "code-arité" pour détecter un changement de groupe
       const barsTokens = measures.map(m => {
         const tokens = [];
         for (const el of m) {
-          const code = DUR_CODE[el.beats];
+          // Pour un élément de triolet, le code de durée écrit se base sur sa durée "nominale"
+          // (celle du symbole affiché), pas sur sa durée réelle sonnée (fractionnaire).
+          const writtenBeats = el.tupletGroup ? el.tupletWrittenBeats : el.beats;
+          const code = DUR_CODE[writtenBeats];
           if (code === undefined) {
-            log(`ALERTE modèle: durée ${el.beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
+            log(`ALERTE modèle: durée ${writtenBeats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
           }
           const finalCode = code ?? 4;
-          if (finalCode !== currentDurCode) {
-            tokens.push(`:${finalCode}`);
+          const tupletKey = el.tupletGroup ? `${finalCode}-${el.tupletGroup}` : null;
+          if (finalCode !== currentDurCode || tupletKey !== currentTupletKey) {
+            tokens.push(tupletKey ? `:${finalCode} {tu ${el.tupletGroup}}` : `:${finalCode}`);
             currentDurCode = finalCode;
+            currentTupletKey = tupletKey;
           }
           if (el.type === 'rest') {
             tokens.push('r');
@@ -411,6 +418,37 @@
       render();
     }
 
+    // Place un groupe de 3 notes (triolet) de même hauteur en une seule action, comme un bloc
+    // atomique. Règle "3 dans l'espace de 2" : le groupe occupe 2× la durée nominale choisie.
+    // Simplification assumée pour ce spike : pas de débordement géré pour les triolets (rejet
+    // si l'espace disponible ne suffit pas, contrairement aux notes simples qui peuvent déborder).
+    function placeTripletGroupAt(measureIndex, localIndex, baseDuration, pitch) {
+      const m = measures[measureIndex];
+      const target = m[localIndex];
+      if (!target || target.type !== 'rest') {
+        log('Un triolet ne peut être placé que sur un silence dans ce spike.');
+        return;
+      }
+      const groupTotal = baseDuration * 2; // 3 notes dans l'espace normalement occupé par 2
+      const startPos = startPositionOf(m, localIndex);
+      const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(m, localIndex);
+
+      if (groupTotal > availableInMeasure + EPS) {
+        log(`REJET — le triolet (${groupTotal} temps au total) ne tient pas dans l'espace contigu disponible (${availableInMeasure}). Débordement non géré pour les triolets dans ce spike.`);
+        return;
+      }
+
+      const perNoteBeats = groupTotal / 3;
+      const tripletNotes = [1, 2, 3].map(() => ({ type: 'note', pitch, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 }));
+      const remaining = availableInMeasure - groupTotal;
+      const restBreakdown = legalRestBreakdown(remaining, startPos + groupTotal);
+      const mergedCount = endIndexExclusive - localIndex;
+
+      m.splice(localIndex, mergedCount, ...tripletNotes, ...restBreakdown.map(b => ({ type: 'rest', beats: b })));
+      log(`Triolet placé (mesure ${measureIndex}, position ${startPos}) — groupe de 3×${pitch} (${perNoteBeats.toFixed(3)} temps chacune, ${groupTotal} temps au total) + silences [${restBreakdown.join(', ')}]`);
+      render();
+    }
+
     function placeNoteAt(measureIndex, localIndex, duration, pitch) {
       const currentMeasure = measures[measureIndex];
       if (!currentMeasure) {
@@ -534,7 +572,12 @@
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      placeNoteAt(measureIndex, beat.index, selectedDuration, pitch);
+      const tripletActive = document.getElementById('tripletToggle').checked;
+      if (tripletActive) {
+        placeTripletGroupAt(measureIndex, beat.index, selectedDuration, pitch);
+      } else {
+        placeNoteAt(measureIndex, beat.index, selectedDuration, pitch);
+      }
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
