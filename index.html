@@ -41,6 +41,7 @@
     <button class="durBtn" data-beats="0.25">Double-croche</button>
   </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
+  <button id="deleteBtn">Supprimer la note sélectionnée</button>
   <button id="copyLogBtn">Copier les logs</button>
 
   <div id="texTester" style="margin-top:16px; border-top:1px solid #eee; padding-top:12px;">
@@ -288,6 +289,46 @@
       return { totalBeats: total, endIndexExclusive: i };
     }
 
+    let selectedNote = null; // { measureIndex, localIndex } — note actuellement sélectionnée pour suppression
+
+    // Suppression = même principe que le déverrouillage d'un silence (fusion + relance du remplissage
+    // automatique), mais ici on fusionne des DEUX côtés (avant ET après), contrairement au remplissage
+    // normal qui ne fusionne que vers l'avant — supprimer une note peut ouvrir de l'espace des deux côtés.
+    function deleteSelectedNote() {
+      if (!selectedNote) {
+        log('Aucune note sélectionnée à supprimer.');
+        return;
+      }
+      const { measureIndex, localIndex } = selectedNote;
+      const m = measures[measureIndex];
+      const target = m[localIndex];
+      if (!target || target.type !== 'note') {
+        log('La sélection ne pointe plus vers une note valide (état déjà modifié depuis) — suppression annulée.');
+        selectedNote = null;
+        return;
+      }
+      if (target.tied) {
+        log('Cette note fait partie d\'une chaîne de liaison — suppression non gérée dans ce spike.');
+        return;
+      }
+
+      m[localIndex] = { type: 'rest', beats: target.beats };
+
+      let start = localIndex;
+      while (start > 0 && m[start - 1].type === 'rest') start--;
+      let end = localIndex + 1;
+      while (end < m.length && m[end].type === 'rest') end++;
+
+      const startPos = startPositionOf(m, start);
+      const totalBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
+      const breakdown = legalRestBreakdown(totalBeats, startPos);
+      m.splice(start, end - start, ...breakdown.map(b => ({ type: 'rest', beats: b })));
+
+      log(`Note supprimée (mesure ${measureIndex}, position ${startPos}) → fusion ${end - start} fragment(s) + remplissage: [${breakdown.join(', ')}]`);
+      selectedNote = null;
+      render();
+    }
+
     function placeNoteAt(measureIndex, localIndex, duration, pitch) {
       const currentMeasure = measures[measureIndex];
       if (!currentMeasure) {
@@ -300,7 +341,12 @@
         return;
       }
       if (target.type !== 'rest') {
-        log(`Clic sur une note déjà en place (mesure ${measureIndex}, index ${localIndex}) — sélection non gérée dans ce spike.`);
+        if (target.tied) {
+          log(`Clic sur une note liée (mesure ${measureIndex}, index ${localIndex}) — suppression d'une note liée non gérée dans ce spike (chaîne de liaison à traiter séparément).`);
+          return;
+        }
+        selectedNote = { measureIndex, localIndex };
+        log(`Note sélectionnée : mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
         return;
       }
 
@@ -414,9 +460,12 @@
         [{ type: 'rest', beats: 4 }],
         [{ type: 'rest', beats: 4 }]
       ];
+      selectedNote = null;
       render();
       log('Mesures réinitialisées.');
     });
+
+    document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
 
     let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
     document.querySelectorAll('.durBtn').forEach(btn => {
