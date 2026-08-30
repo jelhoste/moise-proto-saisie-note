@@ -401,6 +401,14 @@
         return;
       }
 
+      if (target.tupletGroup) {
+        m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup };
+        log(`Note de triolet supprimée (mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
+        selectedNote = null;
+        render();
+        return;
+      }
+
       m[localIndex] = { type: 'rest', beats: target.beats };
 
       let start = localIndex;
@@ -438,14 +446,31 @@
         return;
       }
 
+      // Seule la 1ère position reçoit une note (celle cliquée) ; les deux autres restent des
+      // silences de triolet, à remplir individuellement ensuite — cohérent avec le principe du
+      // reste du système (un clic place une note, jamais un groupe déjà pré-rempli).
       const perNoteBeats = groupTotal / 3;
-      const tripletNotes = [1, 2, 3].map(() => ({ type: 'note', pitch, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 }));
+      const tripletElements = [
+        { type: 'note', pitch, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 }
+      ];
       const remaining = availableInMeasure - groupTotal;
       const restBreakdown = legalRestBreakdown(remaining, startPos + groupTotal);
       const mergedCount = endIndexExclusive - localIndex;
 
-      m.splice(localIndex, mergedCount, ...tripletNotes, ...restBreakdown.map(b => ({ type: 'rest', beats: b })));
-      log(`Triolet placé (mesure ${measureIndex}, position ${startPos}) — groupe de 3×${pitch} (${perNoteBeats.toFixed(3)} temps chacune, ${groupTotal} temps au total) + silences [${restBreakdown.join(', ')}]`);
+      m.splice(localIndex, mergedCount, ...tripletElements, ...restBreakdown.map(b => ({ type: 'rest', beats: b })));
+      log(`Triolet placé (mesure ${measureIndex}, position ${startPos}) — 1ère note ${pitch} (${perNoteBeats.toFixed(3)} temps), 2 silences de triolet à remplir + silences [${restBreakdown.join(', ')}]`);
+      render();
+    }
+
+    // Remplit un emplacement de triolet déjà existant (silence issu d'un groupe) — pas de règle
+    // métrique à appliquer ici, l'emplacement est atomique et sa durée déjà fixée par le groupe.
+    function fillTripletSlot(measureIndex, localIndex, pitch) {
+      const m = measures[measureIndex];
+      const target = m[localIndex];
+      m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup };
+      log(`Silence de triolet rempli (mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
       render();
     }
 
@@ -467,6 +492,11 @@
         }
         selectedNote = { measureIndex, localIndex };
         log(`Note sélectionnée : mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
+        return;
+      }
+
+      if (target.tupletGroup) {
+        fillTripletSlot(measureIndex, localIndex, pitch);
         return;
       }
 
