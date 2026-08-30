@@ -42,6 +42,11 @@
   </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
+  <div id="pitchModifiers" style="margin-top:10px;">
+    <span class="paletteLabel">Hauteur (note sélectionnée, appui court = demi-ton, appui long = octave) : </span>
+    <button id="pitchDownBtn" class="durBtn">▼</button>
+    <button id="pitchUpBtn" class="durBtn">▲</button>
+  </div>
   <button id="copyLogBtn">Copier les logs</button>
 
   <div id="texTester" style="margin-top:16px; border-top:1px solid #eee; padding-top:12px;">
@@ -127,6 +132,83 @@
       [{ type: 'rest', beats: 4 }]
     ];
     const MEASURE_BEATS = 4;
+
+    // --- Modification de hauteur : conversion chromatique ---
+    // Nos notes n'ont qu'un nom diatonique (A4, C5...) sans altération. Pour un vrai ±1 demi-ton,
+    // on convertit en un compteur chromatique (façon MIDI, sans se soucier du numéro exact), on
+    // décale, puis on reconvertit en nom de note. Simplification assumée : toujours épelé en dièse
+    // (pas d'enharmonie selon la tonalité), suffisant pour ce spike.
+    const NATURAL_SEMITONE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+    function pitchToSemitone(pitch) {
+      const m = /^([A-G])(#{1,2}|b{1,2})?(-?\d+)$/.exec(pitch);
+      if (!m) {
+        log(`ALERTE: impossible de parser la hauteur "${pitch}" — 0 utilisé par défaut.`);
+        return 0;
+      }
+      const [, letter, acc, octStr] = m;
+      let semitone = NATURAL_SEMITONE[letter];
+      if (acc === '#') semitone += 1;
+      else if (acc === '##') semitone += 2;
+      else if (acc === 'b') semitone -= 1;
+      else if (acc === 'bb') semitone -= 2;
+      return parseInt(octStr, 10) * 12 + semitone;
+    }
+
+    function semitoneToPitch(semitone) {
+      const octave = Math.floor(semitone / 12);
+      const idx = ((semitone % 12) + 12) % 12;
+      return SHARP_NAMES[idx] + octave;
+    }
+
+    // Une note liée fait partie d'une chaîne (potentiellement à cheval sur plusieurs mesures) :
+    // on doit retrouver toute la chaîne pour propager un changement de hauteur partout, pas
+    // seulement sur le fragment cliqué — comme validé plus tôt dans la conversation.
+    function getTieChainPositions(measureIndex, localIndex) {
+      let mi = measureIndex, li = localIndex;
+      while (measures[mi][li] && measures[mi][li].tied) {
+        li--;
+        if (li < 0) { mi--; li = measures[mi].length - 1; }
+      }
+      const chain = [{ measureIndex: mi, localIndex: li }];
+      let nmi = mi, nli = li + 1;
+      while (true) {
+        if (nmi >= measures.length) break;
+        if (nli >= measures[nmi].length) { nmi++; nli = 0; continue; }
+        const el = measures[nmi][nli];
+        if (el && el.type === 'note' && el.tied) {
+          chain.push({ measureIndex: nmi, localIndex: nli });
+          nli++;
+        } else break;
+      }
+      return chain;
+    }
+
+    function modifySelectedNotePitch(deltaSemitones) {
+      if (!selectedNote) {
+        log('Aucune note sélectionnée — clique sur une note avant d\'utiliser les boutons de hauteur.');
+        return;
+      }
+      const { measureIndex, localIndex } = selectedNote;
+      const el = measures[measureIndex] && measures[measureIndex][localIndex];
+      if (!el || el.type !== 'note') {
+        log('La sélection ne pointe plus vers une note valide.');
+        return;
+      }
+
+      const chain = getTieChainPositions(measureIndex, localIndex);
+      const origin = measures[chain[0].measureIndex][chain[0].localIndex];
+      const oldPitch = origin.pitch;
+      const newPitch = semitoneToPitch(pitchToSemitone(oldPitch) + deltaSemitones);
+
+      for (const pos of chain) {
+        measures[pos.measureIndex][pos.localIndex].pitch = newPitch;
+      }
+
+      log(`Hauteur modifiée: ${oldPitch} → ${newPitch} (Δ${deltaSemitones > 0 ? '+' : ''}${deltaSemitones} demi-ton${Math.abs(deltaSemitones) > 1 ? 's' : ''}), propagé sur ${chain.length} note(s) liée(s).`);
+      render();
+    }
 
     // Génère le tex en suivant EXACTEMENT le motif prouvé par la doc officielle pour un instrument
     // non fretté (\tuning piano) : préfixe ":N" pour la durée par défaut, notes "nues" sans ".durée"
@@ -466,6 +548,26 @@
     });
 
     document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
+
+    // Bouton à deux comportements : appui court = action courte (ici demi-ton), appui long =
+    // action amplifiée (octave), déclenchée DÈS que le seuil est dépassé (pas à la relâche) —
+    // exactement le principe défini plus tôt dans la conversation pour ce type de bouton.
+    function wireDualPress(el, onShort, onLong, thresholdMs = 500) {
+      let timer = null;
+      let longFired = false;
+      el.addEventListener('pointerdown', () => {
+        longFired = false;
+        timer = setTimeout(() => { longFired = true; onLong(); }, thresholdMs);
+      });
+      el.addEventListener('pointerup', () => {
+        clearTimeout(timer);
+        if (!longFired) onShort();
+      });
+      el.addEventListener('pointerleave', () => clearTimeout(timer));
+    }
+
+    wireDualPress(document.getElementById('pitchUpBtn'), () => modifySelectedNotePitch(1), () => modifySelectedNotePitch(12));
+    wireDualPress(document.getElementById('pitchDownBtn'), () => modifySelectedNotePitch(-1), () => modifySelectedNotePitch(-12));
 
     let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
     document.querySelectorAll('.durBtn').forEach(btn => {
