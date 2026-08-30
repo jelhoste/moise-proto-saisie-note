@@ -418,4 +418,29 @@
       log('Mesures réinitialisées.');
     });
 
-    let selectedDuration = 1; // Noire par défa
+    let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
+    document.querySelectorAll('.durBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedDuration = parseFloat(btn.dataset.beats);
+        document.querySelectorAll('.durBtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        log(`Durée sélectionnée: ${btn.textContent} (${selectedDuration} temps).`);
+      });
+    });
+
+    document.getElementById('testTexBtn').addEventListener('click', () => {
+      const customTex = document.getElementById('texInput').value;
+      log(`--- TEST TEX LIBRE --- Appel api.tex(...) avec: ${customTex}`);
+      try {
+        api.tex(customTex);
+      } catch (err) {
+        log(`ÉCHEC synchrone pendant api.tex(): ${err && err.message ? err.message : err}`);
+      }
+    });
+
+    render();
+  })();
+</script>
+
+</body>
+</html>
