@@ -47,7 +47,7 @@
     <p style="font-size:13px; color:#555; margin:0 0 6px;">
       Testeur de tex libre — pour isoler un problème de syntaxe sans repasser par le clic à chaque essai.
     </p>
-    <textarea id="texInput" rows="2" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;">\title "Test" \tempo 100 . \track "Piano" \staff{score} \tuning piano \instrument acousticgrandpiano \ts 4 4 A4.4 B4.4 F5.4 G4.4 | G4.4{t} r.4 r.2</textarea>
+    <textarea id="texInput" rows="2" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;">\title "Test" \tempo 100 . \track "Piano" \staff{score} \tuning piano \instrument acousticgrandpiano \ts 4 4 :4 A4 B4 F5 G4 | :4 - r r.2</textarea>
     <button id="testTexBtn">Tester ce tex</button>
   </div>
 </div>
@@ -127,19 +127,37 @@
     ];
     const MEASURE_BEATS = 4;
 
-    function elementToTex(el) {
-      const map = { 4: 1, 2: 2, 1: 4, 0.5: 8, 0.25: 16 };
-      const dur = map[el.beats];
-      if (dur === undefined) {
-        log(`ALERTE modèle: durée ${el.beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
-      }
-      if (el.type === 'rest') return `r.${dur ?? 4}`;
-      const tieSuffix = el.tied ? '{t}' : ''; // note liée à la précédente (débordement de mesure)
-      return `${el.pitch}.${dur ?? 4}${tieSuffix}`;
-    }
+    // Génère le tex en suivant EXACTEMENT le motif prouvé par la doc officielle pour un instrument
+    // non fretté (\tuning piano) : préfixe ":N" pour la durée par défaut, notes "nues" sans ".durée"
+    // individuelle tant que la durée ne change pas, et "-" (pas "{t}") pour une note liée à la
+    // précédente. On a vérifié que ".durée{t}" collé à une note nommée n'est PAS un motif supporté.
+    const DUR_CODE = { 4: 1, 2: 2, 1: 4, 0.5: 8, 0.25: 16 };
 
     function buildTex() {
-      const barsTex = measures.map(m => m.map(elementToTex).join(' ')).join(' | ');
+      let currentDurCode = null;
+      const barsTokens = measures.map(m => {
+        const tokens = [];
+        for (const el of m) {
+          const code = DUR_CODE[el.beats];
+          if (code === undefined) {
+            log(`ALERTE modèle: durée ${el.beats} temps non représentable en un seul symbole légal (bug si tu vois ceci).`);
+          }
+          const finalCode = code ?? 4;
+          if (finalCode !== currentDurCode) {
+            tokens.push(`:${finalCode}`);
+            currentDurCode = finalCode;
+          }
+          if (el.type === 'rest') {
+            tokens.push('r');
+          } else if (el.tied) {
+            tokens.push('-');
+          } else {
+            tokens.push(el.pitch);
+          }
+        }
+        return tokens.join(' ');
+      });
+      const barsTex = barsTokens.join(' | ');
       // \tuning piano + \instrument déclarent le track comme "pitched" (pas fretté) pour pouvoir
       // utiliser des noms de note (C4, D4...) plutôt que le format frette.corde.
       return `\\title "Prototype saisie" \\tempo 100 . \\track "Piano" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${barsTex}`;
@@ -400,29 +418,4 @@
       log('Mesures réinitialisées.');
     });
 
-    let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
-    document.querySelectorAll('.durBtn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        selectedDuration = parseFloat(btn.dataset.beats);
-        document.querySelectorAll('.durBtn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        log(`Durée sélectionnée: ${btn.textContent} (${selectedDuration} temps).`);
-      });
-    });
-
-    document.getElementById('testTexBtn').addEventListener('click', () => {
-      const customTex = document.getElementById('texInput').value;
-      log(`--- TEST TEX LIBRE --- Appel api.tex(...) avec: ${customTex}`);
-      try {
-        api.tex(customTex);
-      } catch (err) {
-        log(`ÉCHEC synchrone pendant api.tex(): ${err && err.message ? err.message : err}`);
-      }
-    });
-
-    render();
-  })();
-</script>
-
-</body>
-</html>
+    let selectedDuration = 1; // Noire par défa
