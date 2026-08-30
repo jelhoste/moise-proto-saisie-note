@@ -42,6 +42,14 @@
   </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
   <button id="copyLogBtn">Copier les logs</button>
+
+  <div id="texTester" style="margin-top:16px; border-top:1px solid #eee; padding-top:12px;">
+    <p style="font-size:13px; color:#555; margin:0 0 6px;">
+      Testeur de tex libre — pour isoler un problème de syntaxe sans repasser par le clic à chaque essai.
+    </p>
+    <textarea id="texInput" rows="2" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;">\title "Test" \tempo 100 . \track "Piano" \staff{score} \tuning piano \instrument acousticgrandpiano \ts 4 4 A4.4 B4.4 F5.4 G4.4 | G4.4{t} r.4 r.2</textarea>
+    <button id="testTexBtn">Tester ce tex</button>
+  </div>
 </div>
 
 
@@ -400,6 +408,16 @@
         btn.classList.add('active');
         log(`Durée sélectionnée: ${btn.textContent} (${selectedDuration} temps).`);
       });
+    });
+
+    document.getElementById('testTexBtn').addEventListener('click', () => {
+      const customTex = document.getElementById('texInput').value;
+      log(`--- TEST TEX LIBRE --- Appel api.tex(...) avec: ${customTex}`);
+      try {
+        api.tex(customTex);
+      } catch (err) {
+        log(`ÉCHEC synchrone pendant api.tex(): ${err && err.message ? err.message : err}`);
+      }
     });
 
     render();
