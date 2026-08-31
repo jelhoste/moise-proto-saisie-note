@@ -43,6 +43,7 @@
   </div>
   <button id="resetBtn">Réinitialiser la mesure</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
+  <button id="deleteTupletBtn">Supprimer le triolet entier</button>
   <div id="pitchModifiers" style="margin-top:10px;">
     <span class="paletteLabel">Hauteur (note sélectionnée, appui court = demi-ton, appui long = octave) : </span>
     <button id="pitchDownBtn" class="modBtn">▼</button>
@@ -379,6 +380,7 @@
     }
 
     let selectedNote = null; // { measureIndex, localIndex } — note actuellement sélectionnée pour suppression
+    let nextTupletId = 1; // identifiant unique par groupe de triolet, pour distinguer deux groupes voisins de même durée
 
     // Suppression = même principe que le déverrouillage d'un silence (fusion + relance du remplissage
     // automatique), mais ici on fusionne des DEUX côtés (avant ET après), contrairement au remplissage
@@ -402,7 +404,7 @@
       }
 
       if (target.tupletGroup) {
-        m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup };
+        m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
         log(`Note de triolet supprimée (mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
         selectedNote = null;
         render();
@@ -422,6 +424,46 @@
       m.splice(start, end - start, ...breakdown.map(b => ({ type: 'rest', beats: b })));
 
       log(`Note supprimée (mesure ${measureIndex}, position ${startPos}) → fusion ${end - start} fragment(s) + remplissage: [${breakdown.join(', ')}]`);
+      selectedNote = null;
+      render();
+    }
+
+    // Supprime un groupe de triolet ENTIER (pas juste l'emplacement cliqué) — l'espace redevient
+    // du silence normal, soumis à nouveau à la règle métrique classique de remplissage automatique,
+    // puis fusionné avec les silences voisins comme une suppression de note classique.
+    function deleteWholeTuplet() {
+      if (!selectedNote) {
+        log('Aucune note sélectionnée — sélectionne une note du triolet à supprimer.');
+        return;
+      }
+      const { measureIndex, localIndex } = selectedNote;
+      const m = measures[measureIndex];
+      const target = m[localIndex];
+      if (!target || !target.tupletGroup) {
+        log('La note sélectionnée ne fait pas partie d\'un triolet.');
+        return;
+      }
+
+      const tid = target.tupletId;
+      let start = localIndex;
+      while (start > 0 && m[start - 1] && m[start - 1].tupletId === tid) start--;
+      let end = localIndex + 1;
+      while (end < m.length && m[end] && m[end].tupletId === tid) end++;
+
+      const groupBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
+      m.splice(start, end - start, { type: 'rest', beats: groupBeats });
+
+      let mergeStart = start;
+      while (mergeStart > 0 && m[mergeStart - 1].type === 'rest') mergeStart--;
+      let mergeEnd = start + 1;
+      while (mergeEnd < m.length && m[mergeEnd].type === 'rest') mergeEnd++;
+
+      const startPos = startPositionOf(m, mergeStart);
+      const mergedTotal = m.slice(mergeStart, mergeEnd).reduce((s, e) => s + e.beats, 0);
+      const breakdown = legalRestBreakdown(mergedTotal, startPos);
+      m.splice(mergeStart, mergeEnd - mergeStart, ...breakdown.map(b => ({ type: 'rest', beats: b })));
+
+      log(`Triolet entier supprimé (mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}]`);
       selectedNote = null;
       render();
     }
@@ -450,10 +492,11 @@
       // silences de triolet, à remplir individuellement ensuite — cohérent avec le principe du
       // reste du système (un clic place une note, jamais un groupe déjà pré-rempli).
       const perNoteBeats = groupTotal / 3;
+      const tupletId = nextTupletId++;
       const tripletElements = [
-        { type: 'note', pitch, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 },
-        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 },
-        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3 }
+        { type: 'note', pitch, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId }
       ];
       const remaining = availableInMeasure - groupTotal;
       const restBreakdown = legalRestBreakdown(remaining, startPos + groupTotal);
@@ -469,7 +512,7 @@
     function fillTripletSlot(measureIndex, localIndex, pitch) {
       const m = measures[measureIndex];
       const target = m[localIndex];
-      m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup };
+      m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
       log(`Silence de triolet rempli (mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
       render();
     }
@@ -621,6 +664,7 @@
     });
 
     document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
+    document.getElementById('deleteTupletBtn').addEventListener('click', deleteWholeTuplet);
 
     // Bouton à deux comportements : appui court = action courte (ici demi-ton), appui long =
     // action amplifiée (octave), déclenchée DÈS que le seuil est dépassé (pas à la relâche) —
