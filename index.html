@@ -7,7 +7,7 @@
   body { font-family: system-ui, sans-serif; background: #f4f4f6; margin: 0; padding: 24px; }
   h1 { font-size: 18px; }
   p.note { color: #555; font-size: 14px; max-width: 640px; }
-  #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; }
+  #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; position: relative; }
   #alphaTab { min-height: 200px; cursor: pointer; position: relative; }
   #selectionHighlight { position: absolute; background: rgba(255, 180, 0, 0.35); border: 2px solid rgba(255, 140, 0, 0.7); border-radius: 4px; pointer-events: none; display: none; }
   #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
@@ -536,8 +536,14 @@
         return;
       }
       const b = bounds.visualBounds || bounds.realBounds;
-      el.style.left = `${b.x}px`;
-      el.style.top = `${b.y}px`;
+      // Les coordonnées de boundsLookup sont relatives à #alphaTab, mais on ancre le surlignage
+      // sur #wrap (jamais touché par les re-rendus d'alphaTab) — on compense donc avec le décalage
+      // réel entre les deux conteneurs (offsetLeft/offsetTop), plutôt que de supposer un padding fixe.
+      const scoreEl = document.getElementById('alphaTab');
+      const offsetX = scoreEl.offsetLeft;
+      const offsetY = scoreEl.offsetTop;
+      el.style.left = `${b.x + offsetX}px`;
+      el.style.top = `${b.y + offsetY}px`;
       el.style.width = `${Math.max(b.w, 10)}px`;
       el.style.height = `${b.h}px`;
       el.style.display = 'block';
