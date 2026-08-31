@@ -8,7 +8,8 @@
   h1 { font-size: 18px; }
   p.note { color: #555; font-size: 14px; max-width: 640px; }
   #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; }
-  #alphaTab { min-height: 200px; cursor: pointer; }
+  #alphaTab { min-height: 200px; cursor: pointer; position: relative; }
+  #selectionHighlight { position: absolute; background: rgba(255, 180, 0, 0.35); border: 2px solid rgba(255, 140, 0, 0.7); border-radius: 4px; pointer-events: none; display: none; }
   #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
   button { margin-top: 12px; padding: 6px 14px; }
   #durationPalette { margin-top: 12px; }
@@ -32,6 +33,7 @@
 
 <div id="wrap">
   <div id="alphaTab"></div>
+  <div id="selectionHighlight"></div>
   <div id="durationPalette">
     <span class="paletteLabel">Durée : </span>
     <button class="durBtn" data-beats="4">Ronde</button>
@@ -50,13 +52,17 @@
     <button id="pitchUpBtn" class="modBtn">▲</button>
   </div>
   <button id="copyLogBtn">Copier les logs</button>
+  <button id="openTexEditorBtn">Voir/éditer le tex généré</button>
 
-  <div id="texTester" style="margin-top:16px; border-top:1px solid #eee; padding-top:12px;">
+  <div id="texTester" style="margin-top:16px; border-top:1px solid #eee; padding-top:12px; display:none;">
     <p style="font-size:13px; color:#555; margin:0 0 6px;">
-      Testeur de tex libre — pour isoler un problème de syntaxe sans repasser par le clic à chaque essai.
+      Tex actuellement généré par la partition — modifiable, puis "Appliquer" pour le renvoyer directement
+      à alphaTab. Attention : ça affiche le résultat mais ne met PAS à jour notre modèle interne — un clic
+      après coup repartira de l'état d'avant ta modification manuelle, pas de ce que tu viens de taper.
     </p>
-    <textarea id="texInput" rows="2" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;">\title "Test" \tempo 100 . \track "Piano" \staff{score} \tuning piano \instrument acousticgrandpiano \ts 4 4 :4 A4 B4 F5 G4 | :4 - r r.2</textarea>
-    <button id="testTexBtn">Tester ce tex</button>
+    <textarea id="texInput" rows="3" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;"></textarea>
+    <button id="testTexBtn">Appliquer ce tex</button>
+    <button id="closeTexEditorBtn">Fermer</button>
   </div>
 </div>
 
@@ -396,6 +402,7 @@
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide (état déjà modifié depuis) — suppression annulée.');
         selectedNote = null;
+      hideSelectionHighlight();
         return;
       }
       if (target.tied) {
@@ -407,6 +414,7 @@
         m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
         log(`Note de triolet supprimée (mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
         selectedNote = null;
+      hideSelectionHighlight();
         render();
         return;
       }
@@ -425,6 +433,7 @@
 
       log(`Note supprimée (mesure ${measureIndex}, position ${startPos}) → fusion ${end - start} fragment(s) + remplissage: [${breakdown.join(', ')}]`);
       selectedNote = null;
+      hideSelectionHighlight();
       render();
     }
 
@@ -465,6 +474,7 @@
 
       log(`Triolet entier supprimé (mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}]`);
       selectedNote = null;
+      hideSelectionHighlight();
       render();
     }
 
@@ -517,7 +527,27 @@
       render();
     }
 
-    function placeNoteAt(measureIndex, localIndex, duration, pitch) {
+    function showSelectionHighlight(beat) {
+      const el = document.getElementById('selectionHighlight');
+      const lookup = api.boundsLookup;
+      const bounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
+      if (!bounds) {
+        el.style.display = 'none';
+        return;
+      }
+      const b = bounds.visualBounds || bounds.realBounds;
+      el.style.left = `${b.x}px`;
+      el.style.top = `${b.y}px`;
+      el.style.width = `${Math.max(b.w, 10)}px`;
+      el.style.height = `${b.h}px`;
+      el.style.display = 'block';
+    }
+
+    function hideSelectionHighlight() {
+      document.getElementById('selectionHighlight').style.display = 'none';
+    }
+
+    function placeNoteAt(measureIndex, localIndex, duration, pitch, nativeBeat) {
       const currentMeasure = measures[measureIndex];
       if (!currentMeasure) {
         log(`Mesure ${measureIndex} introuvable dans le modèle local.`);
@@ -534,6 +564,7 @@
           return;
         }
         selectedNote = { measureIndex, localIndex };
+        if (nativeBeat) showSelectionHighlight(nativeBeat);
         log(`Note sélectionnée : mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
         return;
       }
@@ -645,11 +676,18 @@
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
+      const clickedTarget = measures[measureIndex] && measures[measureIndex][beat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
-      if (tripletActive) {
+
+      if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
+        // Priorité absolue : un emplacement de triolet déjà existant se remplit, peu importe
+        // l'état de la case "Triolet" — sinon on tente de créer un nouveau groupe qui ne tient
+        // jamais dans un espace aussi petit, et ça échoue silencieusement (bug rapporté).
+        fillTripletSlot(measureIndex, beat.index, pitch);
+      } else if (tripletActive) {
         placeTripletGroupAt(measureIndex, beat.index, selectedDuration, pitch);
       } else {
-        placeNoteAt(measureIndex, beat.index, selectedDuration, pitch);
+        placeNoteAt(measureIndex, beat.index, selectedDuration, pitch, beat);
       }
     });
 
@@ -659,6 +697,7 @@
         [{ type: 'rest', beats: 4 }]
       ];
       selectedNote = null;
+      hideSelectionHighlight();
       render();
       log('Mesures réinitialisées.');
     });
@@ -698,12 +737,21 @@
 
     document.getElementById('testTexBtn').addEventListener('click', () => {
       const customTex = document.getElementById('texInput').value;
-      log(`--- TEST TEX LIBRE --- Appel api.tex(...) avec: ${customTex}`);
+      log(`--- TEX ÉDITÉ MANUELLEMENT --- Appel api.tex(...) avec: ${customTex}`);
       try {
         api.tex(customTex);
       } catch (err) {
         log(`ÉCHEC synchrone pendant api.tex(): ${err && err.message ? err.message : err}`);
       }
+    });
+
+    document.getElementById('openTexEditorBtn').addEventListener('click', () => {
+      document.getElementById('texInput').value = buildTex();
+      document.getElementById('texTester').style.display = 'block';
+    });
+
+    document.getElementById('closeTexEditorBtn').addEventListener('click', () => {
+      document.getElementById('texTester').style.display = 'none';
     });
 
     render();
