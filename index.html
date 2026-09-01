@@ -299,7 +299,17 @@
     api.renderStarted.on(() => log('Événement: rendu démarré...'));
     api.renderFinished.on(() => log('Événement: rendu terminé.'));
     api.soundFontLoad && api.soundFontLoad.on && api.soundFontLoad.on(() => log('Événement: chargement soundfont...'));
-    api.scoreLoaded && api.scoreLoaded.on(() => log('Événement: score chargé (tex parsé avec succès).'));
+    api.scoreLoaded && api.scoreLoaded.on((score) => {
+      log('Événement: score chargé (tex parsé avec succès).');
+      // Par défaut, alphaTab ne rend QUE la première piste, peu importe combien le tex en contient —
+      // il faut explicitement demander le rendu des autres via renderTracks(). Confirmé par la doc/
+      // les discussions officielles, ce n'est pas un problème de syntaxe alphaTex.
+      const tracksToRender = (score && score.tracks) || (api.score && api.score.tracks) || [];
+      if (tracksToRender.length) {
+        log(`Rendu explicite de ${tracksToRender.length} piste(s) via renderTracks().`);
+        api.renderTracks(tracksToRender);
+      }
+    });
 
     function render() {
       log(`Appel api.tex(...) avec: ${buildTex()}`);
