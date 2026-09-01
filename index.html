@@ -23,12 +23,11 @@
 <h1>Prototype technique — clic pour insérer une note dans un silence</h1>
 <p class="note">
   Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
-  <b>Deux mesures</b> à 4 temps, une seule portée en clé de sol. <b>Choisis d'abord une durée</b> ci-dessous,
-  puis <b>clique n'importe où sur un silence</b>. Pour tester le débordement (cas 3 de la règle qu'on a
-  définie) : remplis presque toute la 1ère mesure, puis choisis une durée trop longue pour ce qui reste —
-  la note doit se scinder automatiquement en deux notes liées, à cheval sur la mesure suivante. Si le même
-  essai est fait sur la dernière mesure du morceau, ça doit être rejeté (rien ne se place). Limite connue
-  de ce spike : clé de sol fixe, pas de détection de clé dynamique.
+  <b>Deux pistes (Piano 1 et Piano 2), deux mesures chacune</b>, à 4 temps, clé de sol. <b>Choisis d'abord une
+  durée</b> ci-dessous, puis <b>clique n'importe où sur une portée</b> — celle sur laquelle tu cliques devient
+  la portée active pour la saisie. Le reste du fonctionnement (silences, triolets, liaisons, débordement,
+  suppression, hauteur) est identique à ce qu'on a déjà validé sur une seule piste. Limite connue : clé de
+  sol fixe sur les deux portées, pas de détection de clé dynamique.
 </p>
 
 <div id="wrap">
@@ -43,7 +42,7 @@
     <button class="durBtn" data-beats="0.25">Double-croche</button>
     <label style="margin-left:10px; font-size:13px;"><input type="checkbox" id="tripletToggle"> Triolet (place un groupe de 3)</label>
   </div>
-  <button id="resetBtn">Réinitialiser la mesure</button>
+  <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
   <button id="deleteTupletBtn">Supprimer le triolet entier</button>
   <div id="pitchModifiers" style="margin-top:10px;">
@@ -60,7 +59,7 @@
       à alphaTab. Attention : ça affiche le résultat mais ne met PAS à jour notre modèle interne — un clic
       après coup repartira de l'état d'avant ta modification manuelle, pas de ce que tu viens de taper.
     </p>
-    <textarea id="texInput" rows="3" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;"></textarea>
+    <textarea id="texInput" rows="4" style="width:100%; font-family:monospace; font-size:12px; box-sizing:border-box;"></textarea>
     <button id="testTexBtn">Appliquer ce tex</button>
     <button id="closeTexEditorBtn">Fermer</button>
   </div>
@@ -94,7 +93,6 @@
         throw new Error('navigator.clipboard indisponible');
       }
     } catch (err) {
-      // Repli pour les contextes où l'API Clipboard est bloquée (ex: certaines webviews).
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -113,7 +111,7 @@
 
   log(`Page chargée. Origine: ${location.origin || '(aucune - probablement file:// ou content://)'}, protocole: ${location.protocol}`);
   if (location.protocol === 'file:' || location.protocol === 'content:') {
-    log('ATTENTION: la page semble ouverte directement depuis le stockage (pas via un serveur web). alphaTab a besoin de charger un Web Worker et des fichiers de police via des requêtes réseau internes — cela échoue souvent avec ce protocole. Essaie de servir ce fichier via un petit serveur local (ex: "python3 -m http.server" puis ouvrir http://localhost:8000/prototype-saisie-note.html) plutôt que de l\'ouvrir directement.');
+    log('ATTENTION: la page semble ouverte directement depuis le stockage (pas via un serveur web). alphaTab a besoin de charger un Web Worker et des fichiers de police via des requêtes réseau internes — cela échoue souvent avec ce protocole. Essaie de servir ce fichier via un petit serveur local.');
   }
 
   log('Tentative de chargement du module alphaTab depuis jsDelivr...');
@@ -133,19 +131,22 @@
       log(`alphaTab chargé, version détectée: ${alphaTab.Environment && alphaTab.Environment.buildTimeVersion ? alphaTab.Environment.buildTimeVersion : '(inconnue)'}`);
     } catch (e) { /* ignore, purement informatif */ }
 
-    // Deux mesures maintenant (au lieu d'une seule) : indispensable pour tester le débordement
-    // d'une note sur la mesure suivante. measures[i] est un tableau d'éléments comme avant.
-    let measures = [
-      [{ type: 'rest', beats: 4 }],
-      [{ type: 'rest', beats: 4 }]
+    // --- Modèle multi-pistes ---
+    // Chaque piste a un nom et son propre tableau de mesures. On garde exactement la même structure
+    // de mesure { type, beats, pitch, tied, tupletGroup... } qu'avant, juste imbriquée sous une piste.
+    function freshMeasures() {
+      return [
+        [{ type: 'rest', beats: 4 }],
+        [{ type: 'rest', beats: 4 }]
+      ];
+    }
+    let tracks = [
+      { name: 'Piano 1', measures: freshMeasures() },
+      { name: 'Piano 2', measures: freshMeasures() }
     ];
     const MEASURE_BEATS = 4;
 
     // --- Modification de hauteur : conversion chromatique ---
-    // Nos notes n'ont qu'un nom diatonique (A4, C5...) sans altération. Pour un vrai ±1 demi-ton,
-    // on convertit en un compteur chromatique (façon MIDI, sans se soucier du numéro exact), on
-    // décale, puis on reconvertit en nom de note. Simplification assumée : toujours épelé en dièse
-    // (pas d'enharmonie selon la tonalité), suffisant pour ce spike.
     const NATURAL_SEMITONE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
     const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -170,10 +171,11 @@
       return SHARP_NAMES[idx] + octave;
     }
 
-    // Une note liée fait partie d'une chaîne (potentiellement à cheval sur plusieurs mesures) :
-    // on doit retrouver toute la chaîne pour propager un changement de hauteur partout, pas
-    // seulement sur le fragment cliqué — comme validé plus tôt dans la conversation.
-    function getTieChainPositions(measureIndex, localIndex) {
+    // Une note liée fait partie d'une chaîne (potentiellement à cheval sur plusieurs mesures, mais
+    // toujours au sein de LA MÊME piste) : on retrouve toute la chaîne pour propager un changement
+    // de hauteur partout, pas seulement sur le fragment cliqué.
+    function getTieChainPositions(trackIndex, measureIndex, localIndex) {
+      const measures = tracks[trackIndex].measures;
       let mi = measureIndex, li = localIndex;
       while (measures[mi][li] && measures[mi][li].tied) {
         li--;
@@ -198,14 +200,15 @@
         log('Aucune note sélectionnée — clique sur une note avant d\'utiliser les boutons de hauteur.');
         return;
       }
-      const { measureIndex, localIndex } = selectedNote;
+      const { trackIndex, measureIndex, localIndex } = selectedNote;
+      const measures = tracks[trackIndex].measures;
       const el = measures[measureIndex] && measures[measureIndex][localIndex];
       if (!el || el.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
         return;
       }
 
-      const chain = getTieChainPositions(measureIndex, localIndex);
+      const chain = getTieChainPositions(trackIndex, measureIndex, localIndex);
       const origin = measures[chain[0].measureIndex][chain[0].localIndex];
       const oldPitch = origin.pitch;
       const newPitch = semitoneToPitch(pitchToSemitone(oldPitch) + deltaSemitones);
@@ -214,24 +217,20 @@
         measures[pos.measureIndex][pos.localIndex].pitch = newPitch;
       }
 
-      log(`Hauteur modifiée: ${oldPitch} → ${newPitch} (Δ${deltaSemitones > 0 ? '+' : ''}${deltaSemitones} demi-ton${Math.abs(deltaSemitones) > 1 ? 's' : ''}), propagé sur ${chain.length} note(s) liée(s).`);
+      log(`Hauteur modifiée (${tracks[trackIndex].name}): ${oldPitch} → ${newPitch} (Δ${deltaSemitones > 0 ? '+' : ''}${deltaSemitones} demi-ton${Math.abs(deltaSemitones) > 1 ? 's' : ''}), propagé sur ${chain.length} note(s) liée(s).`);
       render();
     }
 
-    // Génère le tex en suivant EXACTEMENT le motif prouvé par la doc officielle pour un instrument
-    // non fretté (\tuning piano) : préfixe ":N" pour la durée par défaut, notes "nues" sans ".durée"
-    // individuelle tant que la durée ne change pas, et "-" (pas "{t}") pour une note liée à la
-    // précédente. On a vérifié que ".durée{t}" collé à une note nommée n'est PAS un motif supporté.
+    // Génère le tex multi-pistes : chaque piste = un bloc complet et indépendant, les blocs se
+    // suivent (pas d'entrelacement mesure par mesure) — motif confirmé par la doc officielle.
     const DUR_CODE = { 4: 1, 2: 2, 1: 4, 0.5: 8, 0.25: 16 };
 
-    function buildTex() {
+    function buildTrackBars(measures) {
       let currentDurCode = null;
-      let currentTupletKey = null; // null hors triolet, sinon "code-arité" pour détecter un changement de groupe
+      let currentTupletKey = null;
       const barsTokens = measures.map(m => {
         const tokens = [];
         for (const el of m) {
-          // Pour un élément de triolet, le code de durée écrit se base sur sa durée "nominale"
-          // (celle du symbole affiché), pas sur sa durée réelle sonnée (fractionnaire).
           const writtenBeats = el.tupletGroup ? el.tupletWrittenBeats : el.beats;
           const code = DUR_CODE[writtenBeats];
           if (code === undefined) {
@@ -254,10 +253,15 @@
         }
         return tokens.join(' ');
       });
-      const barsTex = barsTokens.join(' | ');
-      // \tuning piano + \instrument déclarent le track comme "pitched" (pas fretté) pour pouvoir
-      // utiliser des noms de note (C4, D4...) plutôt que le format frette.corde.
-      return `\\title "Prototype saisie" \\tempo 100 . \\track "Piano" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${barsTex}`;
+      return barsTokens.join(' | ');
+    }
+
+    function buildTex() {
+      const trackBlocks = tracks.map(t => {
+        const bars = buildTrackBars(t.measures);
+        return `\\track "${t.name}" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${bars}`;
+      });
+      return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -282,8 +286,6 @@
 
     api.error.on((err) => {
       log(`ÉVÉNEMENT api.error: ${err && err.message ? err.message : JSON.stringify(err)}`);
-      // Le message générique renvoie vers une "erreur interne" — on l'affiche explicitement ici,
-      // plutôt que de deviner la cause exacte du parsing échoué.
       const inner = err && (err.innerError || err.cause || err.error);
       if (inner) {
         log(`  ↳ erreur interne: ${inner.message || JSON.stringify(inner)}`);
@@ -309,10 +311,6 @@
     }
 
     // Mapping position verticale -> note, pour une portée en clé de sol.
-    // Simplification assumée pour ce spike : clé de sol fixe, pas de détection de clé dynamique.
-    // On construit une plage diatonique large (plusieurs octaves) avec la vraie numérotation
-    // d'octave (qui change au Do, pas tous les 7 pas) pour pouvoir représenter les lignes
-    // supplémentaires au-dessus/en-dessous de la portée, pas seulement les 5 lignes visibles.
     const NOTE_LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
     function buildDiatonicRange(minOct, maxOct) {
       const arr = [];
@@ -322,30 +320,22 @@
       return arr;
     }
     const DIATONIC_RANGE = buildDiatonicRange(1, 8);
-    const F5_INDEX = DIATONIC_RANGE.indexOf('F5'); // référence : ligne du haut de la portée en clé de sol
+    const F5_INDEX = DIATONIC_RANGE.indexOf('F5');
 
     function noteAtStep(stepIndex) {
-      // stepIndex = 0 -> F5 (ligne du haut), stepIndex croissant = on descend en hauteur.
       const idx = Math.max(0, Math.min(DIATONIC_RANGE.length - 1, F5_INDEX - stepIndex));
       return DIATONIC_RANGE[idx];
     }
 
     function pitchFromY(y, staffBounds) {
       if (!staffBounds || !staffBounds.h) return 'C4';
-      // staffBounds.h correspond à l'écart entre la ligne du haut et la ligne du bas (4 espaces =
-      // 8 demi-pas diatoniques). On NE clampe PLUS entre 0 et 1 : un clic au-dessus ou en-dessous
-      // de la portée donne un stepIndex négatif ou > 8, qui continue sur les lignes supplémentaires.
       const stepPerUnit = 8 / staffBounds.h;
       const stepIndex = Math.round((y - staffBounds.y) * stepPerUnit);
       return noteAtStep(stepIndex);
     }
 
-    // Règle métrique de remplissage automatique : à chaque étape, on choisit la plus longue durée
-    // légale qui (a) tient dans l'espace restant et (b) commence à une position métriquement valide
-    // pour cette durée (ex: une blanche/demi-pause ne peut démarrer qu'en position 0 ou 2 sur une
-    // mesure à 4/4 — jamais en position 1 ou 3). C'est exactement la règle qu'on a définie dans la
-    // feuille de route, appliquée ici en vrai plutôt qu'en un seul silence approximatif.
-    const LEGAL_DURATIONS_DESC = [4, 2, 1, 0.5, 0.25]; // en temps (ronde, blanche, noire, croche, double-croche)
+    // Règle métrique de remplissage automatique (inchangée, indépendante de la piste).
+    const LEGAL_DURATIONS_DESC = [4, 2, 1, 0.5, 0.25];
     const EPS = 1e-6;
 
     function legalRestBreakdown(remainingBeats, startPos) {
@@ -373,8 +363,6 @@
       return pos;
     }
 
-    // Les silences "auto" ne sont pas des blocs figés : tant qu'ils n'ont pas été remplacés par une
-    // note, plusieurs silences consécutifs restent fusionnables en un seul pool d'espace disponible.
     function contiguousRestSpan(measureArr, index) {
       let total = 0;
       let i = index;
@@ -385,24 +373,21 @@
       return { totalBeats: total, endIndexExclusive: i };
     }
 
-    let selectedNote = null; // { measureIndex, localIndex } — note actuellement sélectionnée pour suppression
-    let nextTupletId = 1; // identifiant unique par groupe de triolet, pour distinguer deux groupes voisins de même durée
+    let selectedNote = null; // { trackIndex, measureIndex, localIndex }
+    let nextTupletId = 1;
 
-    // Suppression = même principe que le déverrouillage d'un silence (fusion + relance du remplissage
-    // automatique), mais ici on fusionne des DEUX côtés (avant ET après), contrairement au remplissage
-    // normal qui ne fusionne que vers l'avant — supprimer une note peut ouvrir de l'espace des deux côtés.
     function deleteSelectedNote() {
       if (!selectedNote) {
         log('Aucune note sélectionnée à supprimer.');
         return;
       }
-      const { measureIndex, localIndex } = selectedNote;
-      const m = measures[measureIndex];
+      const { trackIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide (état déjà modifié depuis) — suppression annulée.');
         selectedNote = null;
-      hideSelectionHighlight();
+        hideSelectionHighlight();
         return;
       }
       if (target.tied) {
@@ -412,9 +397,9 @@
 
       if (target.tupletGroup) {
         m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
-        log(`Note de triolet supprimée (mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
+        log(`Note de triolet supprimée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
         selectedNote = null;
-      hideSelectionHighlight();
+        hideSelectionHighlight();
         render();
         return;
       }
@@ -431,22 +416,19 @@
       const breakdown = legalRestBreakdown(totalBeats, startPos);
       m.splice(start, end - start, ...breakdown.map(b => ({ type: 'rest', beats: b })));
 
-      log(`Note supprimée (mesure ${measureIndex}, position ${startPos}) → fusion ${end - start} fragment(s) + remplissage: [${breakdown.join(', ')}]`);
+      log(`Note supprimée (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) → fusion ${end - start} fragment(s) + remplissage: [${breakdown.join(', ')}]`);
       selectedNote = null;
       hideSelectionHighlight();
       render();
     }
 
-    // Supprime un groupe de triolet ENTIER (pas juste l'emplacement cliqué) — l'espace redevient
-    // du silence normal, soumis à nouveau à la règle métrique classique de remplissage automatique,
-    // puis fusionné avec les silences voisins comme une suppression de note classique.
     function deleteWholeTuplet() {
       if (!selectedNote) {
         log('Aucune note sélectionnée — sélectionne une note du triolet à supprimer.');
         return;
       }
-      const { measureIndex, localIndex } = selectedNote;
-      const m = measures[measureIndex];
+      const { trackIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || !target.tupletGroup) {
         log('La note sélectionnée ne fait pas partie d\'un triolet.');
@@ -472,24 +454,20 @@
       const breakdown = legalRestBreakdown(mergedTotal, startPos);
       m.splice(mergeStart, mergeEnd - mergeStart, ...breakdown.map(b => ({ type: 'rest', beats: b })));
 
-      log(`Triolet entier supprimé (mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}]`);
+      log(`Triolet entier supprimé (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}]`);
       selectedNote = null;
       hideSelectionHighlight();
       render();
     }
 
-    // Place un groupe de 3 notes (triolet) de même hauteur en une seule action, comme un bloc
-    // atomique. Règle "3 dans l'espace de 2" : le groupe occupe 2× la durée nominale choisie.
-    // Simplification assumée pour ce spike : pas de débordement géré pour les triolets (rejet
-    // si l'espace disponible ne suffit pas, contrairement aux notes simples qui peuvent déborder).
-    function placeTripletGroupAt(measureIndex, localIndex, baseDuration, pitch) {
-      const m = measures[measureIndex];
+    function placeTripletGroupAt(trackIndex, measureIndex, localIndex, baseDuration, pitch) {
+      const m = tracks[trackIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'rest') {
         log('Un triolet ne peut être placé que sur un silence dans ce spike.');
         return;
       }
-      const groupTotal = baseDuration * 2; // 3 notes dans l'espace normalement occupé par 2
+      const groupTotal = baseDuration * 2;
       const startPos = startPositionOf(m, localIndex);
       const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(m, localIndex);
 
@@ -498,9 +476,6 @@
         return;
       }
 
-      // Seule la 1ère position reçoit une note (celle cliquée) ; les deux autres restent des
-      // silences de triolet, à remplir individuellement ensuite — cohérent avec le principe du
-      // reste du système (un clic place une note, jamais un groupe déjà pré-rempli).
       const perNoteBeats = groupTotal / 3;
       const tupletId = nextTupletId++;
       const tripletElements = [
@@ -513,17 +488,15 @@
       const mergedCount = endIndexExclusive - localIndex;
 
       m.splice(localIndex, mergedCount, ...tripletElements, ...restBreakdown.map(b => ({ type: 'rest', beats: b })));
-      log(`Triolet placé (mesure ${measureIndex}, position ${startPos}) — 1ère note ${pitch} (${perNoteBeats.toFixed(3)} temps), 2 silences de triolet à remplir + silences [${restBreakdown.join(', ')}]`);
+      log(`Triolet placé (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) — 1ère note ${pitch} (${perNoteBeats.toFixed(3)} temps), 2 silences de triolet à remplir + silences [${restBreakdown.join(', ')}]`);
       render();
     }
 
-    // Remplit un emplacement de triolet déjà existant (silence issu d'un groupe) — pas de règle
-    // métrique à appliquer ici, l'emplacement est atomique et sa durée déjà fixée par le groupe.
-    function fillTripletSlot(measureIndex, localIndex, pitch) {
-      const m = measures[measureIndex];
+    function fillTripletSlot(trackIndex, measureIndex, localIndex, pitch) {
+      const m = tracks[trackIndex].measures[measureIndex];
       const target = m[localIndex];
       m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
-      log(`Silence de triolet rempli (mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
+      log(`Silence de triolet rempli (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
       render();
     }
 
@@ -536,9 +509,6 @@
         return;
       }
       const b = bounds.visualBounds || bounds.realBounds;
-      // Les coordonnées de boundsLookup sont relatives à #alphaTab, mais on ancre le surlignage
-      // sur #wrap (jamais touché par les re-rendus d'alphaTab) — on compense donc avec le décalage
-      // réel entre les deux conteneurs (offsetLeft/offsetTop), plutôt que de supposer un padding fixe.
       const scoreEl = document.getElementById('alphaTab');
       const offsetX = scoreEl.offsetLeft;
       const offsetY = scoreEl.offsetTop;
@@ -553,70 +523,66 @@
       document.getElementById('selectionHighlight').style.display = 'none';
     }
 
-    function placeNoteAt(measureIndex, localIndex, duration, pitch, nativeBeat) {
-      const currentMeasure = measures[measureIndex];
+    function placeNoteAt(trackIndex, measureIndex, localIndex, duration, pitch, nativeBeat) {
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
       if (!currentMeasure) {
-        log(`Mesure ${measureIndex} introuvable dans le modèle local.`);
+        log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
       }
       const target = currentMeasure[localIndex];
       if (!target) {
-        log(`Battement d'index ${localIndex} introuvable dans la mesure ${measureIndex}.`);
+        log(`Battement d'index ${localIndex} introuvable (${tracks[trackIndex].name}, mesure ${measureIndex}).`);
         return;
       }
       if (target.type !== 'rest') {
         if (target.tied) {
-          log(`Clic sur une note liée (mesure ${measureIndex}, index ${localIndex}) — suppression d'une note liée non gérée dans ce spike (chaîne de liaison à traiter séparément).`);
+          log(`Clic sur une note liée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) — suppression d'une note liée non gérée dans ce spike.`);
           return;
         }
-        selectedNote = { measureIndex, localIndex };
+        selectedNote = { trackIndex, measureIndex, localIndex };
         if (nativeBeat) showSelectionHighlight(nativeBeat);
-        log(`Note sélectionnée : mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
+        log(`Note sélectionnée : ${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
         return;
       }
 
       if (target.tupletGroup) {
-        fillTripletSlot(measureIndex, localIndex, pitch);
+        fillTripletSlot(trackIndex, measureIndex, localIndex, pitch);
         return;
       }
 
       const startPos = startPositionOf(currentMeasure, localIndex);
       const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(currentMeasure, localIndex);
 
-      // --- Cas normal : la durée choisie tient dans l'espace contigu disponible, pas de débordement ---
       if (duration <= availableInMeasure + EPS) {
         const remaining = availableInMeasure - duration;
         const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
         const mergedCount = endIndexExclusive - localIndex;
-        log(`Silence ciblé (mesure ${measureIndex}, index ${localIndex}, position ${startPos}) — espace contigu: ${availableInMeasure} → note ${pitch} (${duration}) + silences [${restBreakdown.join(', ')}]`);
+        log(`Silence ciblé (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}, position ${startPos}) — espace contigu: ${availableInMeasure} → note ${pitch} (${duration}) + silences [${restBreakdown.join(', ')}]`);
         const newElements = [{ type: 'note', pitch, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
         currentMeasure.splice(localIndex, mergedCount, ...newElements);
         render();
         return;
       }
 
-      // --- Débordement nécessaire : on détermine dans lequel des 3 cas on se trouve ---
       const reachesEndOfMeasure = (startPos + availableInMeasure) >= MEASURE_BEATS - EPS;
 
       if (!reachesEndOfMeasure) {
-        // Cas 1 : obstacle = une note déjà présente plus loin dans la même mesure.
-        log(`REJET — durée ${duration} demandée mais un obstacle (note déjà présente) bloque avant la fin de la mesure ${measureIndex} (espace dispo: ${availableInMeasure}).`);
+        log(`REJET — durée ${duration} demandée mais un obstacle (note déjà présente) bloque avant la fin de la mesure ${measureIndex} (${tracks[trackIndex].name}, espace dispo: ${availableInMeasure}).`);
         return;
       }
 
+      const measures = tracks[trackIndex].measures;
       const isLastMeasure = measureIndex === measures.length - 1;
       if (isLastMeasure) {
-        // Cas 2 : fin de la dernière mesure du morceau, rien après pour déborder.
-        log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure du morceau.`);
+        log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
         return;
       }
 
-      // Cas 3 : une mesure suivante existe -> scission en notes liées, plafonnée à 1 mesure de plus.
       const nextMeasure = measures[measureIndex + 1];
       const part2Total = duration - availableInMeasure;
 
       if (part2Total > MEASURE_BEATS + EPS) {
-        log(`REJET — le débordement nécessiterait plus d'une mesure suivante (${part2Total} temps demandés en mesure suivante) — plafonné à 1 mesure.`);
+        log(`REJET — le débordement nécessiterait plus d'une mesure suivante (${part2Total} temps demandés) — plafonné à 1 mesure.`);
         return;
       }
 
@@ -626,13 +592,12 @@
         return;
       }
 
-      // Décomposition en fragments légaux liés, de part et d'autre de la frontière de mesure.
       const part1Durations = legalRestBreakdown(availableInMeasure, startPos);
       const part2Durations = legalRestBreakdown(part2Total, 0);
       const allDurations = [...part1Durations, ...part2Durations];
       const tiedNotes = allDurations.map((beats, i) => ({ type: 'note', pitch, beats, tied: i > 0 }));
 
-      log(`DÉBORDEMENT (cas 3) — note ${pitch} de ${duration} temps scindée en [${allDurations.join(' + ')}] liée(s), à cheval mesures ${measureIndex}→${measureIndex + 1}.`);
+      log(`DÉBORDEMENT (cas 3, ${tracks[trackIndex].name}) — note ${pitch} de ${duration} temps scindée en [${allDurations.join(' + ')}] liée(s), à cheval mesures ${measureIndex}→${measureIndex + 1}.`);
 
       const mergedCount = endIndexExclusive - localIndex;
       currentMeasure.splice(localIndex, mergedCount, ...tiedNotes.slice(0, part1Durations.length));
@@ -644,8 +609,7 @@
       render();
     }
 
-    // Point d'entrée : on capture la position Y au moment où le doigt/la souris se pose (pointerdown),
-    // AVANT que l'événement natif beatMouseUp ne se déclenche, pour être sûr d'avoir la valeur prête à temps.
+    // Point d'entrée : capture de la position Y au pointerdown (avant beatMouseUp).
     let lastPointerY = null;
     element.addEventListener('pointerdown', (ev) => {
       const rect = element.getBoundingClientRect();
@@ -653,24 +617,28 @@
       log(`[diag] pointerdown à y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
     });
 
-    // Identification du battement : on utilise l'événement natif beatMouseUp (fiable, déjà validé),
-    // plutôt que getBeatAtPos(x,y) qui a un souci d'échelle de coordonnées non résolu.
     api.beatMouseUp.on((beat) => {
       if (!beat) {
         log('Événement beatMouseUp: aucun battement (clic en dehors de toute portée).');
         return;
       }
 
-      // Hypothèse à vérifier en pratique : beat.voice.bar.index donne la mesure, beat.index la
-      // position DANS cette mesure. Avec une seule mesure avant, impossible de distinguer "local à
-      // la mesure" de "global au morceau" — avec deux mesures maintenant, ce log va nous le confirmer.
+      // Deux hypothèses à vérifier en pratique maintenant qu'il y a 2 pistes :
+      // beat.voice.bar.index = mesure (déjà confirmé avant), et
+      // beat.voice.bar.staff.track.index = piste (nouvelle hypothèse, jamais testée jusqu'ici).
       let measureIndex = 0;
+      let trackIndex = 0;
       try {
         if (beat.voice && beat.voice.bar && typeof beat.voice.bar.index === 'number') {
           measureIndex = beat.voice.bar.index;
         }
-      } catch (e) { /* on garde measureIndex=0 par défaut */ }
-      log(`[diag] beat.index=${beat.index}, beat.voice?.bar?.index=${measureIndex}`);
+      } catch (e) { /* measureIndex reste 0 */ }
+      try {
+        if (beat.voice && beat.voice.bar && beat.voice.bar.staff && beat.voice.bar.staff.track && typeof beat.voice.bar.staff.track.index === 'number') {
+          trackIndex = beat.voice.bar.staff.track.index;
+        }
+      } catch (e) { /* trackIndex reste 0 */ }
+      log(`[diag] beat.index=${beat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
 
       let pitch = 'C4';
       const lookup = api.boundsLookup;
@@ -682,38 +650,33 @@
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      const clickedTarget = measures[measureIndex] && measures[measureIndex][beat.index];
+      const measures = tracks[trackIndex] && tracks[trackIndex].measures;
+      const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][beat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
-        // Priorité absolue : un emplacement de triolet déjà existant se remplit, peu importe
-        // l'état de la case "Triolet" — sinon on tente de créer un nouveau groupe qui ne tient
-        // jamais dans un espace aussi petit, et ça échoue silencieusement (bug rapporté).
-        fillTripletSlot(measureIndex, beat.index, pitch);
+        fillTripletSlot(trackIndex, measureIndex, beat.index, pitch);
       } else if (tripletActive) {
-        placeTripletGroupAt(measureIndex, beat.index, selectedDuration, pitch);
+        placeTripletGroupAt(trackIndex, measureIndex, beat.index, selectedDuration, pitch);
       } else {
-        placeNoteAt(measureIndex, beat.index, selectedDuration, pitch, beat);
+        placeNoteAt(trackIndex, measureIndex, beat.index, selectedDuration, pitch, beat);
       }
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
-      measures = [
-        [{ type: 'rest', beats: 4 }],
-        [{ type: 'rest', beats: 4 }]
+      tracks = [
+        { name: 'Piano 1', measures: freshMeasures() },
+        { name: 'Piano 2', measures: freshMeasures() }
       ];
       selectedNote = null;
       hideSelectionHighlight();
       render();
-      log('Mesures réinitialisées.');
+      log('Mesures réinitialisées (les deux pistes).');
     });
 
     document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
     document.getElementById('deleteTupletBtn').addEventListener('click', deleteWholeTuplet);
 
-    // Bouton à deux comportements : appui court = action courte (ici demi-ton), appui long =
-    // action amplifiée (octave), déclenchée DÈS que le seuil est dépassé (pas à la relâche) —
-    // exactement le principe défini plus tôt dans la conversation pour ce type de bouton.
     function wireDualPress(el, onShort, onLong, thresholdMs = 500) {
       let timer = null;
       let longFired = false;
@@ -731,7 +694,7 @@
     wireDualPress(document.getElementById('pitchUpBtn'), () => modifySelectedNotePitch(1), () => modifySelectedNotePitch(12));
     wireDualPress(document.getElementById('pitchDownBtn'), () => modifySelectedNotePitch(-1), () => modifySelectedNotePitch(-12));
 
-    let selectedDuration = 1; // Noire par défaut, cohérent avec le bouton marqué "active" dans le HTML
+    let selectedDuration = 1;
     document.querySelectorAll('.durBtn').forEach(btn => {
       btn.addEventListener('click', () => {
         selectedDuration = parseFloat(btn.dataset.beats);
