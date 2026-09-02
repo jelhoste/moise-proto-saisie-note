@@ -629,13 +629,42 @@
       render();
     }
 
-    // Point d'entrée : capture de la position Y au pointerdown (avant beatMouseUp).
+    // Point d'entrée : capture de la position (X,Y) au pointerdown (avant beatMouseUp).
     let lastPointerY = null;
+    let lastPointerX = null;
     element.addEventListener('pointerdown', (ev) => {
       const rect = element.getBoundingClientRect();
+      lastPointerX = ev.clientX - rect.left;
       lastPointerY = ev.clientY - rect.top;
-      log(`[diag] pointerdown à y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
+      log(`[diag] pointerdown à x=${Math.round(lastPointerX)}, y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
     });
+
+    // Vérification géométrique indépendante de la piste cliquée : on compare la position Y réelle
+    // du clic aux bornes RÉELLES de la portée de chaque piste (via la hiérarchie boundsLookup :
+    // staffSystems > bars(1) [la mesure, toutes pistes] > bars(2) [la mesure, UNE piste]), plutôt
+    // que de faire confiance à beat.voice.bar.staff.track.index — qui s'est révélé peu fiable sur
+    // un silence vide (sa zone cliquable semble parfois ambiguë entre deux portées empilées).
+    function resolveTrackAndBeatManually(x, y, measureIndex) {
+      const lookup = api.boundsLookup;
+      if (!lookup || !lookup.staffSystems) return null;
+      for (const system of lookup.staffSystems) {
+        const masterBar = (system.bars || []).find(mb => mb.index === measureIndex);
+        if (!masterBar) continue;
+        for (let i = 0; i < masterBar.bars.length; i++) {
+          const barBounds = masterBar.bars[i];
+          const b = barBounds.visualBounds || barBounds.realBounds;
+          if (y >= b.y && y <= b.y + b.h) {
+            let matchedBeat = null;
+            if (typeof barBounds.findBeatAtPos === 'function') {
+              const beatBounds = barBounds.findBeatAtPos(x);
+              matchedBeat = beatBounds ? beatBounds.beat : null;
+            }
+            return { trackIndex: i, beat: matchedBeat };
+          }
+        }
+      }
+      return null;
+    }
 
     api.beatMouseUp.on((beat) => {
       if (!beat) {
@@ -658,11 +687,24 @@
           trackIndex = beat.voice.bar.staff.track.index;
         }
       } catch (e) { /* trackIndex reste 0 */ }
-      log(`[diag] beat.index=${beat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
+
+      const geometricMatch = resolveTrackAndBeatManually(lastPointerX, lastPointerY, measureIndex);
+      let effectiveBeat = beat;
+      if (geometricMatch !== null && geometricMatch.trackIndex !== trackIndex) {
+        log(`[diag] DÉSACCORD piste : natif (beatMouseUp)=${trackIndex}, géométrique (position réelle du clic)=${geometricMatch.trackIndex} → on retient la valeur géométrique, plus fiable sur un silence vide.`);
+        trackIndex = geometricMatch.trackIndex;
+        if (geometricMatch.beat) {
+          effectiveBeat = geometricMatch.beat;
+          log(`[diag] Battement local recalculé pour la bonne piste (findBeatAtPos a fonctionné) : nouvel index=${effectiveBeat.index}.`);
+        } else {
+          log(`[diag] ATTENTION: findBeatAtPos indisponible sur cette piste — on garde beat.index=${beat.index} de la piste d'origine, risque de décalage si les pistes ont des structures différentes.`);
+        }
+      }
+      log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
 
       let pitch = 'C4';
       const lookup = api.boundsLookup;
-      const bounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
+      const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
       if (bounds) {
         const b = bounds.visualBounds || bounds.realBounds;
         pitch = pitchFromY(lastPointerY, b);
@@ -671,15 +713,15 @@
       }
 
       const measures = tracks[trackIndex] && tracks[trackIndex].measures;
-      const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][beat.index];
+      const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
-        fillTripletSlot(trackIndex, measureIndex, beat.index, pitch);
+        fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
       } else if (tripletActive) {
-        placeTripletGroupAt(trackIndex, measureIndex, beat.index, selectedDuration, pitch);
+        placeTripletGroupAt(trackIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch);
       } else {
-        placeNoteAt(trackIndex, measureIndex, beat.index, selectedDuration, pitch, beat);
+        placeNoteAt(trackIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch, effectiveBeat);
       }
     });
 
