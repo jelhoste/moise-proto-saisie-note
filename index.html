@@ -639,31 +639,62 @@
       log(`[diag] pointerdown à x=${Math.round(lastPointerX)}, y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
     });
 
-    // Vérification géométrique indépendante de la piste cliquée : on compare la position Y réelle
-    // du clic aux bornes RÉELLES de la portée de chaque piste (via la hiérarchie boundsLookup :
-    // staffSystems > bars(1) [la mesure, toutes pistes] > bars(2) [la mesure, UNE piste]), plutôt
-    // que de faire confiance à beat.voice.bar.staff.track.index — qui s'est révélé peu fiable sur
-    // un silence vide (sa zone cliquable semble parfois ambiguë entre deux portées empilées).
+    // Vérification géométrique indépendante de la piste cliquée : la doc confirme que les limites
+    // d'un BATTEMENT (note ou silence) sont "égales aux limites de la mesure-par-piste", donc
+    // généreuses — comparer à ces limites-là (ce qu'on faisait avant) peut retomber sur la même
+    // ambiguïté qu'alphaTab en interne. On compare plutôt à la position RÉELLE des 5 lignes de
+    // chaque portée (qu'on sait déjà calculer précisément pour la hauteur), et on choisit la piste
+    // dont le CENTRE de portée est le plus proche du clic — bien plus robuste.
+    function getTrackStaffBounds(trackIndex, measureIndex) {
+      try {
+        const track = api.score.tracks[trackIndex];
+        const bar = track.staves[0].bars[measureIndex];
+        const anchorBeat = bar.voices[0].beats[0];
+        const bounds = api.boundsLookup.findBeat(anchorBeat);
+        if (!bounds) return null;
+        return bounds.visualBounds || bounds.realBounds;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function resolveTrackIndexByStaffCenter(y, measureIndex) {
+      const centers = [];
+      for (let i = 0; i < tracks.length; i++) {
+        const b = getTrackStaffBounds(i, measureIndex);
+        if (b) centers.push({ trackIndex: i, center: b.y + b.h / 2 });
+      }
+      if (!centers.length) return null;
+      let best = centers[0];
+      let bestDist = Math.abs(y - best.center);
+      for (const c of centers.slice(1)) {
+        const d = Math.abs(y - c.center);
+        if (d < bestDist) { best = c; bestDist = d; }
+      }
+      return best.trackIndex;
+    }
+
     function resolveTrackAndBeatManually(x, y, measureIndex) {
+      const trackIndex = resolveTrackIndexByStaffCenter(y, measureIndex);
+      if (trackIndex === null) return null;
+      // Une fois la BONNE piste déterminée (axe Y, via le centre de portée), on retrouve le bon
+      // battement local sur l'axe X via les bornes de mesure-par-piste — fiables pour l'axe X,
+      // même si leur étendue en Y peut chevaucher la piste voisine.
       const lookup = api.boundsLookup;
-      if (!lookup || !lookup.staffSystems) return null;
-      for (const system of lookup.staffSystems) {
-        const masterBar = (system.bars || []).find(mb => mb.index === measureIndex);
-        if (!masterBar) continue;
-        for (let i = 0; i < masterBar.bars.length; i++) {
-          const barBounds = masterBar.bars[i];
-          const b = barBounds.visualBounds || barBounds.realBounds;
-          if (y >= b.y && y <= b.y + b.h) {
-            let matchedBeat = null;
-            if (typeof barBounds.findBeatAtPos === 'function') {
-              const beatBounds = barBounds.findBeatAtPos(x);
-              matchedBeat = beatBounds ? beatBounds.beat : null;
-            }
-            return { trackIndex: i, beat: matchedBeat };
+      let matchedBeat = null;
+      if (lookup && lookup.staffSystems) {
+        for (const system of lookup.staffSystems) {
+          const masterBar = (system.bars || []).find(mb => mb.index === measureIndex);
+          if (!masterBar) continue;
+          const barBounds = masterBar.bars[trackIndex];
+          if (barBounds && typeof barBounds.findBeatAtPos === 'function') {
+            const beatBounds = barBounds.findBeatAtPos(x);
+            matchedBeat = beatBounds ? beatBounds.beat : null;
           }
+          break;
         }
       }
-      return null;
+      return { trackIndex, beat: matchedBeat };
     }
 
     api.beatMouseUp.on((beat) => {
