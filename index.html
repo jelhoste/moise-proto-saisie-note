@@ -345,8 +345,8 @@
       // un clic imprécis (notamment près de la limite entre deux portées empilées) ne doit jamais
       // produire une hauteur absurdement extrême dont la hampe démesurée empiéterait visuellement
       // sur la piste voisine (bug rencontré en pratique avec des notes type G1/C1).
-      const MAX_STEP = 20;  // ~6 lignes supplémentaires en dessous de la portée
-      const MIN_STEP = -12; // ~6 lignes supplémentaires au-dessus de la portée
+      const MAX_STEP = 14;  // ~3 lignes supplémentaires en dessous de la portée
+      const MIN_STEP = -6;  // ~3 lignes supplémentaires au-dessus de la portée
       if (stepIndex > MAX_STEP || stepIndex < MIN_STEP) {
         log(`Clic hors de la plage raisonnable de hauteur (step ${stepIndex}) — borné automatiquement.`);
         stepIndex = Math.max(MIN_STEP, Math.min(MAX_STEP, stepIndex));
