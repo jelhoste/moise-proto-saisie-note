@@ -50,6 +50,12 @@
     <button id="pitchDownBtn" class="modBtn">▼</button>
     <button id="pitchUpBtn" class="modBtn">▲</button>
   </div>
+  <div id="measureManager" style="margin-top:10px;">
+    <span class="paletteLabel">Gestion des mesures — clique sur le numéro d'une mesure (au-dessus des portées) pour la sélectionner. Mesure sélectionnée : <b id="selectedMeasureLabel">—</b></span><br/>
+    <button id="insertBeforeBtn">Ajouter une mesure avant</button>
+    <button id="insertAfterBtn">Ajouter une mesure après</button>
+    <button id="deleteMeasureBtn">Supprimer cette mesure</button>
+  </div>
   <button id="copyLogBtn">Copier les logs</button>
   <button id="openTexEditorBtn">Voir/éditer le tex généré</button>
 
@@ -395,6 +401,63 @@
 
     let selectedNote = null; // { trackIndex, measureIndex, localIndex }
     let nextTupletId = 1;
+    let selectedMeasureIndex = null;
+
+    function updateSelectedMeasureLabel() {
+      document.getElementById('selectedMeasureLabel').textContent = selectedMeasureIndex === null ? '—' : String(selectedMeasureIndex);
+    }
+
+    // Ajoute une mesure (silence complet) à TOUTES les pistes en même temps, à la position donnée
+    // — la structure de mesures est partagée entre pistes, on ne peut jamais en désynchroniser une.
+    function insertMeasureAt(index) {
+      for (const t of tracks) {
+        t.measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
+      }
+      log(`Mesure ajoutée en position ${index} (sur les ${tracks.length} pistes).`);
+      selectedNote = null;
+      hideSelectionHighlight();
+      selectedMeasureIndex = null;
+      updateSelectedMeasureLabel();
+      render();
+    }
+
+    function deleteMeasureAt(index) {
+      if (tracks[0].measures.length <= 1) {
+        log('REJET — impossible de supprimer la dernière mesure restante (il en faut au moins une).');
+        return;
+      }
+      for (const t of tracks) {
+        t.measures.splice(index, 1);
+      }
+      log(`Mesure ${index} supprimée (sur les ${tracks.length} pistes).`);
+      selectedNote = null;
+      hideSelectionHighlight();
+      selectedMeasureIndex = null;
+      updateSelectedMeasureLabel();
+      render();
+    }
+
+    // Détecte un clic sur la zone du numéro/marge d'une mesure : au-dessus de la portée la plus
+    // haute d'un système, dans la largeur X de cette mesure (MasterBarBounds = toutes pistes).
+    function resolveMeasureNumberClick(x, y) {
+      const lookup = api.boundsLookup;
+      if (!lookup || !lookup.staffSystems) return null;
+      for (const system of lookup.staffSystems) {
+        for (const masterBar of (system.bars || [])) {
+          const mb = masterBar.visualBounds || masterBar.realBounds;
+          if (x < mb.x || x > mb.x + mb.w) continue;
+          let minTrackTop = Infinity;
+          for (const barBounds of masterBar.bars) {
+            const b = barBounds.visualBounds || barBounds.realBounds;
+            if (b.y < minTrackTop) minTrackTop = b.y;
+          }
+          if (y < minTrackTop) {
+            return masterBar.index;
+          }
+        }
+      }
+      return null;
+    }
 
     function deleteSelectedNote() {
       if (!selectedNote) {
@@ -716,6 +779,21 @@
       log(`[diag] pointerdown à x=${Math.round(lastPointerX)}, y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
     });
 
+    // Clic sur la zone du numéro de mesure : indépendant de beatMouseUp (qui ne se déclenche que
+    // sur un battement — rien à cet endroit, au-dessus de la portée). Écouteur séparé, sans effet
+    // sur les clics qui tombent sur une note/un silence (gérés par beatMouseUp comme avant).
+    element.addEventListener('click', (ev) => {
+      const rect = element.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const measureIndex = resolveMeasureNumberClick(x, y);
+      if (measureIndex !== null) {
+        selectedMeasureIndex = measureIndex;
+        updateSelectedMeasureLabel();
+        log(`Mesure sélectionnée via son numéro : ${measureIndex}.`);
+      }
+    });
+
     // Vérification géométrique indépendante de la piste cliquée : la doc confirme que les limites
     // d'un BATTEMENT (note ou silence) sont "égales aux limites de la mesure-par-piste", donc
     // généreuses — comparer à ces limites-là (ce qu'on faisait avant) peut retomber sur la même
@@ -840,12 +918,27 @@
       ];
       selectedNote = null;
       hideSelectionHighlight();
+      selectedMeasureIndex = null;
+      updateSelectedMeasureLabel();
       render();
       log('Mesures réinitialisées (les deux pistes).');
     });
 
     document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
     document.getElementById('deleteTupletBtn').addEventListener('click', deleteWholeTuplet);
+
+    document.getElementById('insertBeforeBtn').addEventListener('click', () => {
+      if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
+      insertMeasureAt(selectedMeasureIndex);
+    });
+    document.getElementById('insertAfterBtn').addEventListener('click', () => {
+      if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
+      insertMeasureAt(selectedMeasureIndex + 1);
+    });
+    document.getElementById('deleteMeasureBtn').addEventListener('click', () => {
+      if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
+      deleteMeasureAt(selectedMeasureIndex);
+    });
 
     function wireDualPress(el, onShort, onLong, thresholdMs = 500) {
       let timer = null;
