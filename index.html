@@ -602,6 +602,23 @@
       document.getElementById('selectionHighlight').style.display = 'none';
     }
 
+    // Met la palette de durée à jour pour refléter la durée de la note qu'on vient de sélectionner
+    // (sinon la palette reste sur le dernier choix de saisie, incohérent avec ce qui est affiché).
+    function syncDurationPaletteToBeats(beats) {
+      const btns = document.querySelectorAll('.durBtn');
+      let matched = null;
+      btns.forEach(b => {
+        b.classList.remove('active');
+        if (Math.abs(parseFloat(b.dataset.beats) - beats) < EPS) matched = b;
+      });
+      if (matched) {
+        matched.classList.add('active');
+        selectedDuration = beats;
+      } else {
+        log(`Durée de la note sélectionnée (${beats} temps) ne correspond à aucun bouton de la palette (probablement une note de triolet) — palette laissée inchangée.`);
+      }
+    }
+
     function placeNoteAt(trackIndex, measureIndex, localIndex, duration, pitch, nativeBeat) {
       const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
       if (!currentMeasure) {
@@ -620,6 +637,7 @@
         }
         selectedNote = { trackIndex, measureIndex, localIndex };
         if (nativeBeat) showSelectionHighlight(nativeBeat);
+        syncDurationPaletteToBeats(target.beats);
         log(`Note sélectionnée : ${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
         return;
       }
