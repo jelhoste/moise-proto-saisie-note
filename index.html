@@ -442,6 +442,65 @@
       render();
     }
 
+    // Change la durée d'une note DÉJÀ PLACÉE (sélectionnée), sans passer par une suppression puis
+    // resaisie. Rétrécir est toujours possible (l'espace libéré se refusionne avec ce qui suit).
+    // Agrandir n'est possible que si l'espace nécessaire est libre juste après ; sinon rejet
+    // explicite — l'utilisateur doit d'abord libérer la note suivante (bouton Supprimer).
+    function changeSelectedNoteDuration(newDuration) {
+      if (!selectedNote) {
+        log('Aucune note sélectionnée — sélectionne une note avant de changer sa durée.');
+        return;
+      }
+      const { trackIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].measures[measureIndex];
+      const target = m[localIndex];
+      if (!target || target.type !== 'note') {
+        log('La sélection ne pointe plus vers une note valide.');
+        return;
+      }
+      if (target.tied) {
+        log('Cette note fait partie d\'une chaîne de liaison — changement de durée non géré dans ce spike.');
+        return;
+      }
+      if (target.tupletGroup) {
+        log('Cette note fait partie d\'un triolet — sa durée est fixée par le groupe, non modifiable individuellement.');
+        return;
+      }
+
+      const startPos = startPositionOf(m, localIndex);
+
+      if (newDuration <= target.beats + EPS) {
+        // Rétrécir : l'espace libéré (différence + tout ce qui suit déjà en silence) se refusionne.
+        const freedAtEnd = target.beats - newDuration;
+        let end = localIndex + 1;
+        while (end < m.length && m[end].type === 'rest') end++;
+        const followingRestBeats = m.slice(localIndex + 1, end).reduce((s, e) => s + e.beats, 0);
+        const totalToRefill = freedAtEnd + followingRestBeats;
+        const breakdown = legalRestBreakdown(totalToRefill, startPos + newDuration);
+        const newElements = [{ type: 'note', pitch: target.pitch, beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
+        m.splice(localIndex, end - localIndex, ...newElements);
+        log(`Durée réduite (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, espace libéré refusionné : [${breakdown.join(', ')}]`);
+        selectedNote = { trackIndex, measureIndex, localIndex };
+        render();
+        return;
+      }
+
+      // Agrandir : il faut assez d'espace CONTIGU en silence juste après.
+      const needed = newDuration - target.beats;
+      const { totalBeats: availableAfter, endIndexExclusive } = contiguousRestSpan(m, localIndex + 1);
+      if (availableAfter + EPS < needed) {
+        log(`REJET — impossible d'agrandir à ${newDuration} temps : il manque ${(needed - availableAfter).toFixed(3)} temps d'espace juste après. Libère (supprime) la note suivante d'abord.`);
+        return;
+      }
+      const remaining = availableAfter - needed;
+      const breakdown = legalRestBreakdown(remaining, startPos + newDuration);
+      const newElements = [{ type: 'note', pitch: target.pitch, beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
+      m.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
+      log(`Durée agrandie (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, silences restants : [${breakdown.join(', ')}]`);
+      selectedNote = { trackIndex, measureIndex, localIndex };
+      render();
+    }
+
     function deleteWholeTuplet() {
       if (!selectedNote) {
         log('Aucune note sélectionnée — sélectionne une note du triolet à supprimer.');
@@ -794,6 +853,9 @@
         document.querySelectorAll('.durBtn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         log(`Durée sélectionnée: ${btn.textContent} (${selectedDuration} temps).`);
+        if (selectedNote) {
+          changeSelectedNoteDuration(selectedDuration);
+        }
       });
     });
 
