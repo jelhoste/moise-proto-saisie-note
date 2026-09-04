@@ -858,6 +858,15 @@
         return;
       }
 
+      // Zone d'exclusion : si ce même clic tombe dans la zone du numéro de mesure (au-dessus de
+      // la portée), on ignore complètement la saisie de note ici — c'est le sélecteur de mesure
+      // (écouteur "click" séparé) qui gère ce cas. Sans ça, les deux se déclenchent sur le même
+      // clic puisque la zone cliquable d'un battement s'étend visiblement jusque là-haut aussi.
+      if (resolveMeasureNumberClick(lastPointerX, lastPointerY) !== null) {
+        log('[diag] Clic dans la zone du numéro de mesure — ignoré pour la saisie de note.');
+        return;
+      }
+
       // Deux hypothèses à vérifier en pratique maintenant qu'il y a 2 pistes :
       // beat.voice.bar.index = mesure (déjà confirmé avant), et
       // beat.voice.bar.staff.track.index = piste (nouvelle hypothèse, jamais testée jusqu'ici).
