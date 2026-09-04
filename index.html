@@ -10,6 +10,8 @@
   #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; position: relative; }
   #alphaTab { min-height: 200px; cursor: pointer; position: relative; }
   #selectionHighlight { position: absolute; background: rgba(255, 180, 0, 0.35); border: 2px solid rgba(255, 140, 0, 0.7); border-radius: 4px; pointer-events: none; display: none; }
+  .measureHandle { position: absolute; background: #2b6cb0; color: #fff; font-size: 11px; line-height: 1; padding: 2px 6px; border-radius: 8px; cursor: pointer; user-select: none; z-index: 5; }
+  .measureHandle.active { background: #e05d00; }
   #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
   button { margin-top: 12px; padding: 6px 14px; }
   #durationPalette { margin-top: 12px; }
@@ -33,6 +35,7 @@
 <div id="wrap">
   <div id="alphaTab"></div>
   <div id="selectionHighlight"></div>
+  <div id="measureHandles"></div>
   <div id="durationPalette">
     <span class="paletteLabel">Durée : </span>
     <button class="durBtn" data-beats="4">Ronde</button>
@@ -303,7 +306,7 @@
       }
     });
     api.renderStarted.on(() => log('Événement: rendu démarré...'));
-    api.renderFinished.on(() => log('Événement: rendu terminé.'));
+    api.renderFinished.on(() => { log('Événement: rendu terminé.'); renderMeasureHandles(); });
     api.soundFontLoad && api.soundFontLoad.on && api.soundFontLoad.on(() => log('Événement: chargement soundfont...'));
     api.scoreLoaded && api.scoreLoaded.on((score) => {
       log('Événement: score chargé (tex parsé avec succès).');
@@ -405,6 +408,40 @@
 
     function updateSelectedMeasureLabel() {
       document.getElementById('selectedMeasureLabel').textContent = selectedMeasureIndex === null ? '—' : String(selectedMeasureIndex);
+    }
+
+    // Poignées custom de mesure : une par mesure ET par piste (contrairement au numéro natif
+    // d'alphaTab, affiché une seule fois en haut du système). On les positionne nous-mêmes avec
+    // les mêmes coordonnées (bars niveau 2 = mesure par piste) qu'on utilise déjà ailleurs — plus
+    // robuste que de deviner une zone au-dessus de la portée.
+    function renderMeasureHandles() {
+      const container = document.getElementById('measureHandles');
+      container.innerHTML = '';
+      const lookup = api.boundsLookup;
+      if (!lookup || !lookup.staffSystems) return;
+      const scoreEl = document.getElementById('alphaTab');
+      const offsetX = scoreEl.offsetLeft;
+      const offsetY = scoreEl.offsetTop;
+      for (const system of lookup.staffSystems) {
+        for (const masterBar of (system.bars || [])) {
+          masterBar.bars.forEach((barBounds, trackIdx) => {
+            const b = barBounds.visualBounds || barBounds.realBounds;
+            const handle = document.createElement('div');
+            handle.className = 'measureHandle' + (masterBar.index === selectedMeasureIndex ? ' active' : '');
+            handle.textContent = String(masterBar.index + 1);
+            handle.style.left = `${b.x + offsetX}px`;
+            handle.style.top = `${b.y + offsetY - 18}px`;
+            handle.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              selectedMeasureIndex = masterBar.index;
+              updateSelectedMeasureLabel();
+              log(`Mesure sélectionnée via poignée dédiée : ${masterBar.index} (cliquée sur piste ${trackIdx}).`);
+              renderMeasureHandles();
+            });
+            container.appendChild(handle);
+          });
+        }
+      }
     }
 
     // Ajoute une mesure (silence complet) à TOUTES les pistes en même temps, à la position donnée
