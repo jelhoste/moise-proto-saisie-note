@@ -405,6 +405,7 @@
     let selectedNote = null; // { trackIndex, measureIndex, localIndex }
     let nextTupletId = 1;
     let selectedMeasureIndex = null;
+    let selectedMeasureHandleTrack = null; // piste exacte de la poignée cliquée (pas juste le numéro de mesure)
 
     function updateSelectedMeasureLabel() {
       document.getElementById('selectedMeasureLabel').textContent = selectedMeasureIndex === null ? '—' : String(selectedMeasureIndex);
@@ -426,14 +427,16 @@
         for (const masterBar of (system.bars || [])) {
           masterBar.bars.forEach((barBounds, trackIdx) => {
             const b = barBounds.visualBounds || barBounds.realBounds;
+            const isActive = masterBar.index === selectedMeasureIndex && trackIdx === selectedMeasureHandleTrack;
             const handle = document.createElement('div');
-            handle.className = 'measureHandle' + (masterBar.index === selectedMeasureIndex ? ' active' : '');
+            handle.className = 'measureHandle' + (isActive ? ' active' : '');
             handle.textContent = String(masterBar.index + 1);
             handle.style.left = `${b.x + offsetX}px`;
             handle.style.top = `${b.y + offsetY - 18}px`;
             handle.addEventListener('click', (ev) => {
               ev.stopPropagation();
               selectedMeasureIndex = masterBar.index;
+              selectedMeasureHandleTrack = trackIdx;
               updateSelectedMeasureLabel();
               log(`Mesure sélectionnée via poignée dédiée : ${masterBar.index} (cliquée sur piste ${trackIdx}).`);
               renderMeasureHandles();
@@ -454,6 +457,7 @@
       selectedNote = null;
       hideSelectionHighlight();
       selectedMeasureIndex = null;
+      selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       render();
     }
@@ -470,6 +474,7 @@
       selectedNote = null;
       hideSelectionHighlight();
       selectedMeasureIndex = null;
+      selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       render();
     }
@@ -965,6 +970,7 @@
       selectedNote = null;
       hideSelectionHighlight();
       selectedMeasureIndex = null;
+      selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       render();
       log('Mesures réinitialisées (les deux pistes).');
