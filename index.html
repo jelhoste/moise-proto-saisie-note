@@ -407,6 +407,19 @@
     let selectedMeasureIndex = null;
     let selectedMeasureHandleTrack = null; // piste exacte de la poignée cliquée (pas juste le numéro de mesure)
 
+    // Règle de désélection : toute cible différente de la note actuellement sélectionnée
+    // (silence, vide, zone numéro, poignée de mesure, autre note...) désélectionne d'abord.
+    function isSameSelection(a, b) {
+      return !!a && !!b && a.trackIndex === b.trackIndex && a.measureIndex === b.measureIndex && a.localIndex === b.localIndex;
+    }
+
+    function deselectNote(reason) {
+      if (!selectedNote) return;
+      log(`Désélection de la note précédente (${reason}).`);
+      selectedNote = null;
+      hideSelectionHighlight();
+    }
+
     function updateSelectedMeasureLabel() {
       document.getElementById('selectedMeasureLabel').textContent = selectedMeasureIndex === null ? '—' : String(selectedMeasureIndex);
     }
@@ -435,6 +448,7 @@
             handle.style.top = `${b.y + offsetY - 18}px`;
             handle.addEventListener('click', (ev) => {
               ev.stopPropagation();
+              deselectNote('clic sur une poignée de mesure');
               selectedMeasureIndex = masterBar.index;
               selectedMeasureHandleTrack = trackIdx;
               updateSelectedMeasureLabel();
@@ -477,28 +491,6 @@
       selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       render();
-    }
-
-    // Détecte un clic sur la zone du numéro/marge d'une mesure : au-dessus de la portée la plus
-    // haute d'un système, dans la largeur X de cette mesure (MasterBarBounds = toutes pistes).
-    function resolveMeasureNumberClick(x, y) {
-      const lookup = api.boundsLookup;
-      if (!lookup || !lookup.staffSystems) return null;
-      for (const system of lookup.staffSystems) {
-        for (const masterBar of (system.bars || [])) {
-          const mb = masterBar.visualBounds || masterBar.realBounds;
-          if (x < mb.x || x > mb.x + mb.w) continue;
-          let minTrackTop = Infinity;
-          for (const barBounds of masterBar.bars) {
-            const b = barBounds.visualBounds || barBounds.realBounds;
-            if (b.y < minTrackTop) minTrackTop = b.y;
-          }
-          if (y < minTrackTop) {
-            return masterBar.index;
-          }
-        }
-      }
-      return null;
     }
 
     function deleteSelectedNote() {
@@ -821,20 +813,10 @@
       log(`[diag] pointerdown à x=${Math.round(lastPointerX)}, y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
     });
 
-    // Clic sur la zone du numéro de mesure : indépendant de beatMouseUp (qui ne se déclenche que
-    // sur un battement — rien à cet endroit, au-dessus de la portée). Écouteur séparé, sans effet
-    // sur les clics qui tombent sur une note/un silence (gérés par beatMouseUp comme avant).
-    element.addEventListener('click', (ev) => {
-      const rect = element.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      const measureIndex = resolveMeasureNumberClick(x, y);
-      if (measureIndex !== null) {
-        selectedMeasureIndex = measureIndex;
-        updateSelectedMeasureLabel();
-        log(`Mesure sélectionnée via son numéro : ${measureIndex}.`);
-      }
-    });
+    // La sélection de mesure passe désormais exclusivement par les poignées dédiées
+    // (renderMeasureHandles), positionnées avec les vraies coordonnées par ligne/piste —
+    // l'ancienne détection de zone par position X globale a été retirée (ambiguë dès qu'une
+    // partition s'étale sur plusieurs lignes).
 
     // Vérification géométrique indépendante de la piste cliquée : la doc confirme que les limites
     // d'un BATTEMENT (note ou silence) sont "égales aux limites de la mesure-par-piste", donc
@@ -897,17 +879,14 @@
     api.beatMouseUp.on((beat) => {
       if (!beat) {
         log('Événement beatMouseUp: aucun battement (clic en dehors de toute portée).');
+        deselectNote('clic en dehors de toute portée');
         return;
       }
 
-      // Zone d'exclusion : si ce même clic tombe dans la zone du numéro de mesure (au-dessus de
-      // la portée), on ignore complètement la saisie de note ici — c'est le sélecteur de mesure
-      // (écouteur "click" séparé) qui gère ce cas. Sans ça, les deux se déclenchent sur le même
-      // clic puisque la zone cliquable d'un battement s'étend visiblement jusque là-haut aussi.
-      if (resolveMeasureNumberClick(lastPointerX, lastPointerY) !== null) {
-        log('[diag] Clic dans la zone du numéro de mesure — ignoré pour la saisie de note.');
-        return;
-      }
+      // Les poignées de mesure dédiées (divs positionnés au-dessus de la portée, z-index 5)
+      // interceptent physiquement le clic avant qu'il n'atteigne le rendu alphaTab en dessous —
+      // plus besoin ici de deviner une zone approximative par position X/Y : si beatMouseUp se
+      // déclenche, c'est que le clic a bien atteint une portée, pas une poignée.
 
       // Deux hypothèses à vérifier en pratique maintenant qu'il y a 2 pistes :
       // beat.voice.bar.index = mesure (déjà confirmé avant), et
@@ -952,6 +931,11 @@
       const measures = tracks[trackIndex] && tracks[trackIndex].measures;
       const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
+
+      const clickedPos = { trackIndex, measureIndex, localIndex: effectiveBeat.index };
+      if (!isSameSelection(selectedNote, clickedPos)) {
+        deselectNote('clic sur une cible différente de la sélection actuelle');
+      }
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
         fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
