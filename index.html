@@ -420,6 +420,15 @@
       hideSelectionHighlight();
     }
 
+    function deselectMeasure(reason) {
+      if (selectedMeasureIndex === null) return;
+      log(`Désélection de la mesure précédente (${reason}).`);
+      selectedMeasureIndex = null;
+      selectedMeasureHandleTrack = null;
+      updateSelectedMeasureLabel();
+      renderMeasureHandles();
+    }
+
     function updateSelectedMeasureLabel() {
       document.getElementById('selectedMeasureLabel').textContent = selectedMeasureIndex === null ? '—' : String(selectedMeasureIndex);
     }
@@ -936,6 +945,7 @@
       if (!isSameSelection(selectedNote, clickedPos)) {
         deselectNote('clic sur une cible différente de la sélection actuelle');
       }
+      deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
         fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
