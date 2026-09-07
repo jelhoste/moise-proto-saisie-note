@@ -57,6 +57,7 @@
     <span class="paletteLabel">Gestion des mesures — clique sur le numéro d'une mesure (au-dessus des portées) pour la sélectionner. Mesure sélectionnée : <b id="selectedMeasureLabel">—</b></span><br/>
     <button id="insertBeforeBtn">Ajouter une mesure avant</button>
     <button id="insertAfterBtn">Ajouter une mesure après</button>
+    <button id="appendMeasureBtn">Ajouter une mesure à la fin</button>
     <button id="deleteMeasureBtn">Supprimer cette mesure</button>
   </div>
   <button id="copyLogBtn">Copier les logs</button>
@@ -470,9 +471,42 @@
       }
     }
 
+    // Une chaîne de liaison ne peut être créée qu'entre deux mesures ADJACENTES (débordement
+    // "cas 3" dans placeNoteAt) : le premier élément d'une mesure a `tied: true` si et seulement
+    // s'il continue une note liée depuis la fin de la mesure précédente. On s'appuie là-dessus pour
+    // détecter tout risque de couper une liaison en deux, plutôt que de tenter une réparation.
+    function measureBoundaryHasTie(boundaryIndex) {
+      // boundaryIndex = position où une nouvelle mesure serait insérée, entre l'ancienne mesure
+      // (boundaryIndex - 1) et l'ancienne mesure (boundaryIndex). Pas de frontière avant la
+      // première mesure ni après la dernière.
+      if (boundaryIndex <= 0 || boundaryIndex >= tracks[0].measures.length) return false;
+      for (const t of tracks) {
+        const next = t.measures[boundaryIndex];
+        if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+      }
+      return false;
+    }
+
+    function measureParticipatesInTie(index) {
+      // true si la mesure `index` reçoit une liaison de la mesure précédente, ou en envoie une
+      // vers la mesure suivante — dans les deux cas, la supprimer couperait la chaîne.
+      for (const t of tracks) {
+        const m = t.measures[index];
+        if (!m) continue;
+        if (m[0] && m[0].type === 'note' && m[0].tied) return true;
+        const next = t.measures[index + 1];
+        if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+      }
+      return false;
+    }
+
     // Ajoute une mesure (silence complet) à TOUTES les pistes en même temps, à la position donnée
     // — la structure de mesures est partagée entre pistes, on ne peut jamais en désynchroniser une.
     function insertMeasureAt(index) {
+      if (measureBoundaryHasTie(index)) {
+        log(`REJET — impossible d'insérer une mesure en position ${index} : une note liée traverse cette frontière (entre les mesures ${index - 1} et ${index}). Modifie ou supprime d'abord cette liaison.`);
+        return;
+      }
       for (const t of tracks) {
         t.measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
       }
@@ -488,6 +522,10 @@
     function deleteMeasureAt(index) {
       if (tracks[0].measures.length <= 1) {
         log('REJET — impossible de supprimer la dernière mesure restante (il en faut au moins une).');
+        return;
+      }
+      if (measureParticipatesInTie(index)) {
+        log(`REJET — impossible de supprimer la mesure ${index} : une liaison la traverse (vers la mesure précédente ou suivante). Modifie ou supprime d'abord cette liaison.`);
         return;
       }
       for (const t of tracks) {
@@ -980,6 +1018,9 @@
     document.getElementById('insertAfterBtn').addEventListener('click', () => {
       if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
       insertMeasureAt(selectedMeasureIndex + 1);
+    });
+    document.getElementById('appendMeasureBtn').addEventListener('click', () => {
+      insertMeasureAt(tracks[0].measures.length);
     });
     document.getElementById('deleteMeasureBtn').addEventListener('click', () => {
       if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
