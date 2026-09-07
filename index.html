@@ -971,6 +971,20 @@
       }
     });
 
+    // Second point d'entrée, dédié au cliquer-tirer uniquement : #alphaTab ne remplit pas toute
+    // la hauteur (ni forcément toute la largeur) de #wrap — en dessous/à côté de la portée rendue,
+    // il reste du vide qui appartient à #wrap mais jamais à #alphaTab, donc jamais couvert par le
+    // listener ci-dessus. On ne réagit ici que si le clic tombe DIRECTEMENT sur #wrap lui-même
+    // (ev.target === wrapEl) — un clic sur #alphaTab ou son contenu est déjà pris en charge par
+    // le listener au-dessus, pas de double déclenchement possible.
+    const wrapEl = document.getElementById('wrap');
+    wrapEl.addEventListener('pointerdown', (ev) => {
+      if (ev.target !== wrapEl) return;
+      if (ev.pointerType === 'mouse') {
+        startDragScroll(ev);
+      }
+    });
+
     // La sélection de mesure passe désormais exclusivement par les poignées dédiées
     // (renderMeasureHandles), positionnées avec les vraies coordonnées par ligne/piste —
     // l'ancienne détection de zone par position X globale a été retirée (ambiguë dès qu'une
