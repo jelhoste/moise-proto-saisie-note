@@ -307,7 +307,7 @@
       }
     });
     api.renderStarted.on(() => log('Événement: rendu démarré...'));
-    api.renderFinished.on(() => { log('Événement: rendu terminé.'); renderMeasureHandles(); });
+    api.renderFinished.on(() => { log('Événement: rendu terminé.'); renderMeasureHandles(); scheduleScrollCompensation(); });
     api.soundFontLoad && api.soundFontLoad.on && api.soundFontLoad.on(() => log('Événement: chargement soundfont...'));
     api.scoreLoaded && api.scoreLoaded.on((score) => {
       log('Événement: score chargé (tex parsé avec succès).');
@@ -428,6 +428,48 @@
       selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       renderMeasureHandles();
+    }
+
+    // Compensation de scroll après remise en page : un clic direct sur la portée mémorise la
+    // position Y visée (relative à #alphaTab, même repère que les bounds alphaTab) ; une fois le
+    // nouveau rendu stabilisé, on retrouve la nouvelle position de CE MÊME battement et on décale
+    // la page verticalement pour qu'il réapparaisse au même endroit à l'écran qu'au moment du clic.
+    // Ne s'applique qu'aux clics directs sur la portée (pas aux éditions via les boutons durée/hauteur).
+    let pendingScrollCompensation = null; // { trackIndex, measureIndex, localIndex, targetY }
+    let scrollCompensationTimer = null;
+
+    function scheduleScrollCompensation() {
+      if (!pendingScrollCompensation) return;
+      clearTimeout(scrollCompensationTimer);
+      // Débounce : plusieurs événements renderFinished se succèdent pour une même édition (un par
+      // piste) — on attend une courte accalmie avant d'appliquer, pour ne compenser qu'une fois la
+      // mise en page vraiment stabilisée.
+      scrollCompensationTimer = setTimeout(applyPendingScrollCompensation, 60);
+    }
+
+    function applyPendingScrollCompensation() {
+      if (!pendingScrollCompensation) return;
+      const { trackIndex, measureIndex, localIndex, targetY } = pendingScrollCompensation;
+      pendingScrollCompensation = null;
+      try {
+        const track = api.score.tracks[trackIndex];
+        const bar = track.staves[0].bars[measureIndex];
+        const beat = bar.voices[0].beats[localIndex];
+        const bounds = beat && api.boundsLookup && api.boundsLookup.findBeat ? api.boundsLookup.findBeat(beat) : null;
+        if (!bounds) {
+          log('[diag] Compensation de scroll : bounds introuvables pour la note visée après le nouveau rendu — scroll inchangé.');
+          return;
+        }
+        const b = bounds.visualBounds || bounds.realBounds;
+        const newY = b.y + b.h / 2;
+        const delta = newY - targetY;
+        if (Math.abs(delta) > 1) {
+          window.scrollBy({ top: delta, behavior: 'auto' });
+          log(`[diag] Compensation de scroll appliquée : ${Math.round(delta)}px, pour ramener la note sous le point de clic d'origine.`);
+        }
+      } catch (e) {
+        log(`[diag] Échec de la compensation de scroll: ${e && e.message ? e.message : e}`);
+      }
     }
 
     function updateSelectedMeasureLabel() {
@@ -984,6 +1026,8 @@
         deselectNote('clic sur une cible différente de la sélection actuelle');
       }
       deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
+
+      pendingScrollCompensation = { trackIndex, measureIndex, localIndex: effectiveBeat.index, targetY: lastPointerY };
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
         fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
