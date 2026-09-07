@@ -4,17 +4,23 @@
 <meta charset="UTF-8" />
 <title>Prototype - clic pour saisir une note (alphaTab)</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #f4f4f6; margin: 0; padding: 24px; }
-  h1 { font-size: 18px; }
-  p.note { color: #555; font-size: 14px; max-width: 640px; }
-  #wrap { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; max-width: 700px; position: relative; }
-  #alphaTab { min-height: 200px; cursor: pointer; position: relative; }
+  html, body { font-family: system-ui, sans-serif; margin: 0; padding: 0; height: 100%; overflow: hidden; background: #f4f4f6; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  p.note { color: #555; font-size: 12px; margin: 0 0 8px; }
+  /* Conteneur de la partition : collé en haut-gauche, prend toute la fenêtre, défilement interne
+     (horizontal surtout, vu le layoutMode Horizontal d'alphaTab — une seule ligne continue). */
+  #wrap { background: #fff; position: fixed; top: 0; left: 0; right: 0; bottom: 0; overflow: auto; z-index: 1; }
+  #alphaTab { min-height: 200px; min-width: 100%; cursor: pointer; position: relative; }
   #selectionHighlight { position: absolute; background: rgba(255, 180, 0, 0.35); border: 2px solid rgba(255, 140, 0, 0.7); border-radius: 4px; pointer-events: none; display: none; }
   .measureHandle { position: absolute; background: #2b6cb0; color: #fff; font-size: 11px; line-height: 1; padding: 2px 6px; border-radius: 8px; cursor: pointer; user-select: none; z-index: 5; }
   .measureHandle.active { background: #e05d00; }
-  #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 16px; max-width: 700px; height: 120px; overflow-y: auto; border-radius: 6px; }
-  button { margin-top: 12px; padding: 6px 14px; }
-  #durationPalette { margin-top: 12px; }
+  /* Superposition : tous les contrôles/outils, par-dessus la partition — approche provisoire pour
+     travailler dans des conditions proches du fonctionnement final (menus flottants), pas encore
+     l'apparence définitive. */
+  #controlsOverlay { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: rgba(255,255,255,0.97); border-top: 1px solid #ccc; max-height: 48vh; overflow-y: auto; padding: 10px 16px; box-sizing: border-box; }
+  #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 10px; height: 110px; overflow-y: auto; border-radius: 6px; }
+  button { margin-top: 8px; padding: 6px 14px; }
+  #durationPalette { margin-top: 8px; }
   .paletteLabel { font-size: 13px; color: #555; margin-right: 4px; }
   .durBtn, .modBtn { margin: 0 4px 0 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
   .durBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
@@ -22,20 +28,23 @@
 </head>
 <body>
 
-<h1>Prototype technique — clic pour insérer une note dans un silence</h1>
-<p class="note">
-  Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
-  <b>Deux pistes (Piano 1 et Piano 2), deux mesures chacune</b>, à 4 temps, clé de sol. <b>Choisis d'abord une
-  durée</b> ci-dessous, puis <b>clique n'importe où sur une portée</b> — celle sur laquelle tu cliques devient
-  la portée active pour la saisie. Le reste du fonctionnement (silences, triolets, liaisons, débordement,
-  suppression, hauteur) est identique à ce qu'on a déjà validé sur une seule piste. Limite connue : clé de
-  sol fixe sur les deux portées, pas de détection de clé dynamique.
-</p>
-
 <div id="wrap">
   <div id="alphaTab"></div>
   <div id="selectionHighlight"></div>
   <div id="measureHandles"></div>
+</div>
+
+<div id="controlsOverlay">
+  <h1>Prototype technique — clic pour insérer une note dans un silence</h1>
+  <p class="note">
+    Ceci est une maquette jetable, pas le vrai moteur d'édition qu'on a spécifié dans la feuille de route.
+    <b>Deux pistes (Piano 1 et Piano 2), deux mesures chacune</b>, à 4 temps, clé de sol. <b>Choisis d'abord une
+    durée</b> ci-dessous, puis <b>clique n'importe où sur une portée</b> — celle sur laquelle tu cliques devient
+    la portée active pour la saisie. Le reste du fonctionnement (silences, triolets, liaisons, débordement,
+    suppression, hauteur) est identique à ce qu'on a déjà validé sur une seule piste. Limite connue : clé de
+    sol fixe sur les deux portées, pas de détection de clé dynamique.
+  </p>
+
   <div id="durationPalette">
     <span class="paletteLabel">Durée : </span>
     <button class="durBtn" data-beats="4">Ronde</button>
@@ -73,10 +82,9 @@
     <button id="testTexBtn">Appliquer ce tex</button>
     <button id="closeTexEditorBtn">Fermer</button>
   </div>
+
+  <div id="log">En attente d'un clic sur la portée...</div>
 </div>
-
-
-<div id="log">En attente d'un clic sur la portée...</div>
 
 <script>
   const logEl = document.getElementById('log');
@@ -285,7 +293,8 @@
           fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/'
         },
         display: {
-          staveProfile: 'Score'
+          staveProfile: 'Score',
+          layoutMode: 'Horizontal'
         }
       });
       log('AlphaTabApi créée sans exception.');
@@ -449,7 +458,7 @@
 
     function applyPendingScrollCompensation() {
       if (!pendingScrollCompensation) return;
-      const { trackIndex, measureIndex, localIndex, targetY } = pendingScrollCompensation;
+      const { trackIndex, measureIndex, localIndex, targetX, targetY } = pendingScrollCompensation;
       pendingScrollCompensation = null;
       try {
         const track = api.score.tracks[trackIndex];
@@ -461,11 +470,16 @@
           return;
         }
         const b = bounds.visualBounds || bounds.realBounds;
+        const newX = b.x + b.w / 2;
         const newY = b.y + b.h / 2;
-        const delta = newY - targetY;
-        if (Math.abs(delta) > 1) {
-          window.scrollBy({ top: delta, behavior: 'auto' });
-          log(`[diag] Compensation de scroll appliquée : ${Math.round(delta)}px, pour ramener la note sous le point de clic d'origine.`);
+        const deltaX = newX - targetX;
+        const deltaY = newY - targetY;
+        // Le conteneur #wrap est désormais plein écran avec défilement interne (la page elle-même
+        // ne défile plus) — on compense donc son scrollLeft/scrollTop, plus window.scrollBy.
+        const wrapEl = document.getElementById('wrap');
+        if (wrapEl && (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1)) {
+          wrapEl.scrollBy({ left: deltaX, top: deltaY, behavior: 'auto' });
+          log(`[diag] Compensation de scroll appliquée : x=${Math.round(deltaX)}px, y=${Math.round(deltaY)}px, pour ramener la note sous le point de clic d'origine.`);
         }
       } catch (e) {
         log(`[diag] Échec de la compensation de scroll: ${e && e.message ? e.message : e}`);
@@ -1027,7 +1041,7 @@
       }
       deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
 
-      pendingScrollCompensation = { trackIndex, measureIndex, localIndex: effectiveBeat.index, targetY: lastPointerY };
+      pendingScrollCompensation = { trackIndex, measureIndex, localIndex: effectiveBeat.index, targetX: lastPointerX, targetY: lastPointerY };
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
         fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
