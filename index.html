@@ -665,6 +665,27 @@
       render();
     }
 
+    // Fusionne un groupe de triolet (positions [start, end) d'une mesure) en silence(s) normal/aux,
+    // en refusionnant avec les silences voisins — logique partagée entre la suppression manuelle du
+    // triolet entier et le nettoyage automatique quand sa dernière note est supprimée.
+    function collapseTupletGroupToPlainRests(trackIndex, measureIndex, start, end, reason) {
+      const m = tracks[trackIndex].measures[measureIndex];
+      const groupBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
+      m.splice(start, end - start, { type: 'rest', beats: groupBeats });
+
+      let mergeStart = start;
+      while (mergeStart > 0 && m[mergeStart - 1].type === 'rest') mergeStart--;
+      let mergeEnd = start + 1;
+      while (mergeEnd < m.length && m[mergeEnd].type === 'rest') mergeEnd++;
+
+      const startPos = startPositionOf(m, mergeStart);
+      const mergedTotal = m.slice(mergeStart, mergeEnd).reduce((s, e) => s + e.beats, 0);
+      const breakdown = legalRestBreakdown(mergedTotal, startPos);
+      m.splice(mergeStart, mergeEnd - mergeStart, ...breakdown.map(b => ({ type: 'rest', beats: b })));
+
+      log(`Triolet entier supprimé (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}] (${reason}).`);
+    }
+
     function deleteSelectedNote() {
       if (!selectedNote) {
         log('Aucune note sélectionnée à supprimer.');
@@ -686,10 +707,21 @@
 
       if (target.tupletGroup) {
         m[localIndex] = { type: 'rest', beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
-        log(`Note de triolet supprimée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
+        const tid = target.tupletId;
+        let start = localIndex;
+        while (start > 0 && m[start - 1] && m[start - 1].tupletId === tid) start--;
+        let end = localIndex + 1;
+        while (end < m.length && m[end] && m[end].tupletId === tid) end++;
+        const groupStillHasNote = m.slice(start, end).some(e => e.type === 'note');
         selectedNote = null;
         hideSelectionHighlight();
-        render();
+        if (groupStillHasNote) {
+          log(`Note de triolet supprimée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
+          render();
+        } else {
+          collapseTupletGroupToPlainRests(trackIndex, measureIndex, start, end, 'dernière note du triolet supprimée — nettoyage automatique du groupe');
+          render();
+        }
         return;
       }
 
@@ -789,20 +821,7 @@
       let end = localIndex + 1;
       while (end < m.length && m[end] && m[end].tupletId === tid) end++;
 
-      const groupBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
-      m.splice(start, end - start, { type: 'rest', beats: groupBeats });
-
-      let mergeStart = start;
-      while (mergeStart > 0 && m[mergeStart - 1].type === 'rest') mergeStart--;
-      let mergeEnd = start + 1;
-      while (mergeEnd < m.length && m[mergeEnd].type === 'rest') mergeEnd++;
-
-      const startPos = startPositionOf(m, mergeStart);
-      const mergedTotal = m.slice(mergeStart, mergeEnd).reduce((s, e) => s + e.beats, 0);
-      const breakdown = legalRestBreakdown(mergedTotal, startPos);
-      m.splice(mergeStart, mergeEnd - mergeStart, ...breakdown.map(b => ({ type: 'rest', beats: b })));
-
-      log(`Triolet entier supprimé (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) → silence normal restauré + remplissage: [${breakdown.join(', ')}]`);
+      collapseTupletGroupToPlainRests(trackIndex, measureIndex, start, end, 'suppression manuelle du groupe entier');
       selectedNote = null;
       hideSelectionHighlight();
       render();
