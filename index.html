@@ -61,6 +61,7 @@
   <p id="fretPickerTitle"></p>
   <div id="fretPickerDurations"></div>
   <div id="fretPickerGrid"></div>
+  <button id="fretPickerDelete" style="display:none; background:#c0392b; color:#fff; border-color:#c0392b;">Supprimer cette note</button>
   <button id="fretPickerClose">Annuler</button>
 </div>
 
@@ -260,6 +261,10 @@
       const el = measures[measureIndex] && measures[measureIndex][localIndex];
       if (!el || el.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
+        return;
+      }
+      if (tracks[trackIndex].staffType === 'tabs') {
+        log('Note de tablature sélectionnée — les boutons de hauteur ne s\'appliquent qu\'aux portées classiques. Reclique sur la note pour changer sa case via le popup.');
         return;
       }
 
@@ -747,6 +752,13 @@
     // resaisie. Rétrécir est toujours possible (l'espace libéré se refusionne avec ce qui suit).
     // Agrandir n'est possible que si l'espace nécessaire est libre juste après ; sinon rejet
     // explicite — l'utilisateur doit d'abord libérer la note suivante (bouton Supprimer).
+    // Reconstruit le contenu d'une note (hauteur nommée OU corde+frette) selon ce que porte
+    // l'élément d'origine — évite de coder en dur `pitch` dans les fonctions qui touchent aux
+    // deux types de piste (comme changeSelectedNoteDuration ci-dessous).
+    function noteContentOf(target) {
+      return target.string !== undefined ? { string: target.string, fret: target.fret } : { pitch: target.pitch };
+    }
+
     function changeSelectedNoteDuration(newDuration) {
       if (!selectedNote) {
         log('Aucune note sélectionnée — sélectionne une note avant de changer sa durée.');
@@ -778,7 +790,7 @@
         const followingRestBeats = m.slice(localIndex + 1, end).reduce((s, e) => s + e.beats, 0);
         const totalToRefill = freedAtEnd + followingRestBeats;
         const breakdown = legalRestBreakdown(totalToRefill, startPos + newDuration);
-        const newElements = [{ type: 'note', pitch: target.pitch, beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
+        const newElements = [{ type: 'note', ...noteContentOf(target), beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
         m.splice(localIndex, end - localIndex, ...newElements);
         log(`Durée réduite (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, espace libéré refusionné : [${breakdown.join(', ')}]`);
         selectedNote = { trackIndex, measureIndex, localIndex };
@@ -795,7 +807,7 @@
       }
       const remaining = availableAfter - needed;
       const breakdown = legalRestBreakdown(remaining, startPos + newDuration);
-      const newElements = [{ type: 'note', pitch: target.pitch, beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
+      const newElements = [{ type: 'note', ...noteContentOf(target), beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
       m.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
       log(`Durée agrandie (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, silences restants : [${breakdown.join(', ')}]`);
       selectedNote = { trackIndex, measureIndex, localIndex };
@@ -1168,6 +1180,22 @@
           closeFretPicker();
         });
         grid.appendChild(b);
+      }
+
+      // Bouton Supprimer : uniquement quand on édite une note déjà posée (existingFret non nul).
+      // Réutilise deleteSelectedNote() telle quelle — elle exige selectedNote, déjà renseigné par
+      // beatMouseUp avant l'ouverture du popup sur une note existante ; gère nativement triolet
+      // (silence de triolet, y compris le nettoyage automatique du groupe) et note normale.
+      const deleteBtn = document.getElementById('fretPickerDelete');
+      if (existingFret !== null) {
+        deleteBtn.style.display = 'block';
+        deleteBtn.onclick = () => {
+          deleteSelectedNote();
+          closeFretPicker();
+        };
+      } else {
+        deleteBtn.style.display = 'none';
+        deleteBtn.onclick = null;
       }
 
       const modal = document.getElementById('fretPicker');
