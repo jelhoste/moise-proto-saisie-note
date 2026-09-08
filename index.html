@@ -163,8 +163,10 @@
     }
     function makeDefaultTracks() {
       return [
-        { name: 'Piano 1', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
-        { name: 'Piano 2', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
+        // TEMPORAIRE — pianos mis de côté pour isoler le problème de rendu de la tablature (à
+        // remettre dès que le rendu guitare seul est confirmé) :
+        // { name: 'Piano 1', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
+        // { name: 'Piano 2', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
