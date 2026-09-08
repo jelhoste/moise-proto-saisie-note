@@ -161,10 +161,17 @@
         [{ type: 'rest', beats: 4 }]
       ];
     }
-    let tracks = [
-      { name: 'Piano 1', measures: freshMeasures() },
-      { name: 'Piano 2', measures: freshMeasures() }
-    ];
+    function makeDefaultTracks() {
+      return [
+        { name: 'Piano 1', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
+        { name: 'Piano 2', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
+        // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
+        // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
+        // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
+        { name: 'Guitare', measures: freshMeasures(), staffType: 'tabs', tuning: 'e5 b4 g4 d4 a3 e3', instrument: 'acousticguitarsteel' }
+      ];
+    }
+    let tracks = makeDefaultTracks();
     const MEASURE_BEATS = 4;
 
     // --- Modification de hauteur : conversion chromatique ---
@@ -280,7 +287,7 @@
     function buildTex() {
       const trackBlocks = tracks.map(t => {
         const bars = buildTrackBars(t.measures);
-        return `\\track "${t.name}" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 ${bars}`;
+        return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${t.tuning} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
       });
       return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')}`;
     }
@@ -1096,6 +1103,13 @@
       }
       log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
 
+      if (tracks[trackIndex] && tracks[trackIndex].staffType === 'tabs') {
+        deselectNote('clic sur une piste en tablature, non interactive pour l\'instant');
+        deselectMeasure('clic sur une piste en tablature, non interactive pour l\'instant');
+        log(`Piste "${tracks[trackIndex].name}" en tablature — pas encore de saisie interactive dessus (juste un test de rendu pour l'instant). Clic ignoré.`);
+        return;
+      }
+
       let pitch = 'C4';
       const lookup = api.boundsLookup;
       const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
@@ -1128,17 +1142,14 @@
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
-      tracks = [
-        { name: 'Piano 1', measures: freshMeasures() },
-        { name: 'Piano 2', measures: freshMeasures() }
-      ];
+      tracks = makeDefaultTracks();
       selectedNote = null;
       hideSelectionHighlight();
       selectedMeasureIndex = null;
       selectedMeasureHandleTrack = null;
       updateSelectedMeasureLabel();
       render();
-      log('Mesures réinitialisées (les deux pistes).');
+      log(`Mesures réinitialisées (les ${tracks.length} pistes).`);
     });
 
     document.getElementById('deleteBtn').addEventListener('click', deleteSelectedNote);
