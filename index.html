@@ -1232,16 +1232,19 @@
       const vTop = vv ? vv.offsetTop : 0;
       const vWidth = vv ? vv.width : window.innerWidth;
       const vHeight = vv ? vv.height : window.innerHeight;
-      const rect = modal.getBoundingClientRect();
 
       if (isPhoneMode()) {
         modal.classList.add('phone-mode');
         modal.style.width = `${vWidth}px`;
         modal.style.left = `${vLeft}px`;
+        // Mesure APRÈS avoir fixé la largeur définitive : le retour à la ligne des boutons de
+        // durée (flex-wrap) dépend de la largeur, donc la hauteur mesurée avant serait fausse.
+        const rect = modal.getBoundingClientRect();
         modal.style.top = `${vTop + vHeight - rect.height}px`;
       } else {
         modal.classList.remove('phone-mode');
         modal.style.width = '';
+        const rect = modal.getBoundingClientRect();
         const { clientX, clientY } = fretPickerAnchor;
         let left = clientX;
         let top = clientY - rect.height - 10;
