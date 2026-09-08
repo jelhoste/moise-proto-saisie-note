@@ -1232,25 +1232,33 @@
       const vTop = vv ? vv.offsetTop : 0;
       const vWidth = vv ? vv.width : window.innerWidth;
       const vHeight = vv ? vv.height : window.innerHeight;
+      const scale = vv ? vv.scale : 1;
 
+      // Contrepartie du zoom au doigt : le navigateur agrandit visuellement TOUT ce qui est rendu,
+      // y compris les éléments position:fixed (ils ne défilent pas avec la page, mais restent
+      // zoomés optiquement comme le reste). On applique l'inverse via transform, ancré sur le coin
+      // haut-gauche (transform-origin) pour ne pas décaler la position calculée plus bas.
+      modal.style.transformOrigin = 'top left';
+      modal.style.transform = scale !== 1 ? `scale(${1 / scale})` : '';
+
+      // offsetWidth/offsetHeight plutôt que getBoundingClientRect() : insensibles au transform
+      // ci-dessus, pour que le calcul de position reste dans le même repère que vLeft/vTop/etc.
       if (isPhoneMode()) {
         modal.classList.add('phone-mode');
         modal.style.width = `${vWidth}px`;
         modal.style.left = `${vLeft}px`;
         // Mesure APRÈS avoir fixé la largeur définitive : le retour à la ligne des boutons de
         // durée (flex-wrap) dépend de la largeur, donc la hauteur mesurée avant serait fausse.
-        const rect = modal.getBoundingClientRect();
-        modal.style.top = `${vTop + vHeight - rect.height}px`;
+        modal.style.top = `${vTop + vHeight - modal.offsetHeight}px`;
       } else {
         modal.classList.remove('phone-mode');
         modal.style.width = '';
-        const rect = modal.getBoundingClientRect();
         const { clientX, clientY } = fretPickerAnchor;
         let left = clientX;
-        let top = clientY - rect.height - 10;
+        let top = clientY - modal.offsetHeight - 10;
         if (top < vTop + 8) top = clientY + 20;
-        left = Math.max(vLeft + 8, Math.min(left, vLeft + vWidth - rect.width - 8));
-        top = Math.max(vTop + 8, Math.min(top, vTop + vHeight - rect.height - 8));
+        left = Math.max(vLeft + 8, Math.min(left, vLeft + vWidth - modal.offsetWidth - 8));
+        top = Math.max(vTop + 8, Math.min(top, vTop + vHeight - modal.offsetHeight - 8));
         modal.style.left = `${left}px`;
         modal.style.top = `${top}px`;
       }
