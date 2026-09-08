@@ -191,12 +191,12 @@
     }
     function makeDefaultTracks() {
       return [
-        { name: 'Piano 1', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
-        { name: 'Piano 2', measures: freshMeasures(), staffType: 'score', tuning: 'piano', instrument: 'acousticgrandpiano' },
+        { name: 'Piano 1', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, measures: freshMeasures() }] },
+        { name: 'Piano 2', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, measures: freshMeasures() }] },
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
-        { name: 'Guitare', measures: freshMeasures(), staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', instrument: 'acousticguitarsteel' }
+        { name: 'Guitare', instrument: 'acousticguitarsteel', staves: [{ staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', clef: null, measures: freshMeasures() }] }
       ];
     }
     let tracks = makeDefaultTracks();
@@ -231,7 +231,7 @@
     // toujours au sein de LA MÊME piste) : on retrouve toute la chaîne pour propager un changement
     // de hauteur partout, pas seulement sur le fragment cliqué.
     function getTieChainPositions(trackIndex, measureIndex, localIndex) {
-      const measures = tracks[trackIndex].measures;
+      const measures = tracks[trackIndex].staves[0].measures;
       let mi = measureIndex, li = localIndex;
       while (measures[mi][li] && measures[mi][li].tied) {
         li--;
@@ -257,13 +257,13 @@
         return;
       }
       const { trackIndex, measureIndex, localIndex } = selectedNote;
-      const measures = tracks[trackIndex].measures;
+      const measures = tracks[trackIndex].staves[0].measures;
       const el = measures[measureIndex] && measures[measureIndex][localIndex];
       if (!el || el.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
         return;
       }
-      if (tracks[trackIndex].staffType === 'tabs') {
+      if (tracks[trackIndex].staves[0].staffType === 'tabs') {
         log('Note de tablature sélectionnée — les boutons de hauteur ne s\'appliquent qu\'aux portées classiques. Reclique sur la note pour changer sa case via le popup.');
         return;
       }
@@ -321,16 +321,24 @@
 
     // Doc officielle (alphatab.net/docs/alphatex/staff-metadata, section \tuning) : deux formes
     // existent — \tuning piano|none|voice (mot-clé nu, mode) OU \tuning (liste de pitches), cette
-    // seconde forme exigeant des PARENTHÈSES autour de la liste. Les pistes score utilisent le
-    // mot-clé nu ; une piste tab a besoin de la forme parenthésée.
-    function buildTuningToken(track) {
-      return track.staffType === 'tabs' ? `(${track.tuning})` : track.tuning;
+    // seconde forme exigeant des PARENTHÈSES autour de la liste. Les portées score utilisent le
+    // mot-clé nu ; une portée tab a besoin de la forme parenthésée.
+    function buildTuningToken(staff) {
+      return staff.staffType === 'tabs' ? `(${staff.tuning})` : staff.tuning;
     }
 
     function buildTex() {
       const trackBlocks = tracks.map(t => {
-        const bars = buildTrackBars(t.measures);
-        return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${buildTuningToken(t)} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
+        // \instrument est une propriété de PISTE (doc structural-metadata) — émis une seule fois,
+        // sur la première portée, jamais répété sur les portées suivantes (cf. exemple grand staff
+        // officiel : seule la 1ère portée a \instrument, la 2e n'a que \tuning + \clef).
+        const staffBlocks = t.staves.map((s, i) => {
+          const bars = buildTrackBars(s.measures);
+          const instrumentToken = i === 0 ? ` \\instrument ${t.instrument}` : '';
+          const clefToken = s.clef ? ` \\clef ${s.clef}` : '';
+          return `\\staff{${s.staffType}} \\tuning ${buildTuningToken(s)}${instrumentToken}${clefToken} \\ts 4 4 ${bars}`;
+        });
+        return `\\track "${t.name}" ${staffBlocks.join(' ')}`;
       });
       return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')} ${buildExtraRenderTestTracksTex()}`;
     }
@@ -626,9 +634,9 @@
       // boundaryIndex = position où une nouvelle mesure serait insérée, entre l'ancienne mesure
       // (boundaryIndex - 1) et l'ancienne mesure (boundaryIndex). Pas de frontière avant la
       // première mesure ni après la dernière.
-      if (boundaryIndex <= 0 || boundaryIndex >= tracks[0].measures.length) return false;
+      if (boundaryIndex <= 0 || boundaryIndex >= tracks[0].staves[0].measures.length) return false;
       for (const t of tracks) {
-        const next = t.measures[boundaryIndex];
+        const next = t.staves[0].measures[boundaryIndex];
         if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
       }
       return false;
@@ -638,10 +646,10 @@
       // true si la mesure `index` reçoit une liaison de la mesure précédente, ou en envoie une
       // vers la mesure suivante — dans les deux cas, la supprimer couperait la chaîne.
       for (const t of tracks) {
-        const m = t.measures[index];
+        const m = t.staves[0].measures[index];
         if (!m) continue;
         if (m[0] && m[0].type === 'note' && m[0].tied) return true;
-        const next = t.measures[index + 1];
+        const next = t.staves[0].measures[index + 1];
         if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
       }
       return false;
@@ -655,7 +663,7 @@
         return;
       }
       for (const t of tracks) {
-        t.measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
+        t.staves[0].measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
       }
       log(`Mesure ajoutée en position ${index} (sur les ${tracks.length} pistes).`);
       selectedNote = null;
@@ -667,7 +675,7 @@
     }
 
     function deleteMeasureAt(index) {
-      if (tracks[0].measures.length <= 1) {
+      if (tracks[0].staves[0].measures.length <= 1) {
         log('REJET — impossible de supprimer la dernière mesure restante (il en faut au moins une).');
         return;
       }
@@ -676,7 +684,7 @@
         return;
       }
       for (const t of tracks) {
-        t.measures.splice(index, 1);
+        t.staves[0].measures.splice(index, 1);
       }
       log(`Mesure ${index} supprimée (sur les ${tracks.length} pistes).`);
       selectedNote = null;
@@ -691,7 +699,7 @@
     // en refusionnant avec les silences voisins — logique partagée entre la suppression manuelle du
     // triolet entier et le nettoyage automatique quand sa dernière note est supprimée.
     function collapseTupletGroupToPlainRests(trackIndex, measureIndex, start, end, reason) {
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const groupBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
       m.splice(start, end - start, { type: 'rest', beats: groupBeats });
 
@@ -714,7 +722,7 @@
         return;
       }
       const { trackIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide (état déjà modifié depuis) — suppression annulée.');
@@ -782,7 +790,7 @@
         return;
       }
       const { trackIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
@@ -837,7 +845,7 @@
         return;
       }
       const { trackIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       if (!target || !target.tupletGroup) {
         log('La note sélectionnée ne fait pas partie d\'un triolet.');
@@ -857,7 +865,7 @@
     }
 
     function placeTripletGroupAt(trackIndex, measureIndex, localIndex, baseDuration, pitch) {
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'rest') {
         log('Un triolet ne peut être placé que sur un silence dans ce spike.');
@@ -889,7 +897,7 @@
     }
 
     function fillTripletSlot(trackIndex, measureIndex, localIndex, pitch) {
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
       log(`Silence de triolet rempli (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
@@ -937,7 +945,7 @@
     }
 
     function placeNoteAt(trackIndex, measureIndex, localIndex, duration, pitch, nativeBeat) {
-      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[0].measures[measureIndex];
       if (!currentMeasure) {
         log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
@@ -985,7 +993,7 @@
         return;
       }
 
-      const measures = tracks[trackIndex].measures;
+      const measures = tracks[trackIndex].staves[0].measures;
       const isLastMeasure = measureIndex === measures.length - 1;
       if (isLastMeasure) {
         log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
@@ -1028,7 +1036,7 @@
     // suivante), avec la corde+frette à la place d'une hauteur nommée. Pas de triolets ici — gérés
     // séparément par placeTabTripletGroupAt/fillTabTripletSlot, comme côté score.
     function placeTabNoteAt(trackIndex, measureIndex, localIndex, duration, string, fret) {
-      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[0].measures[measureIndex];
       if (!currentMeasure) {
         log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
@@ -1074,7 +1082,7 @@
         return;
       }
 
-      const measures = tracks[trackIndex].measures;
+      const measures = tracks[trackIndex].staves[0].measures;
       const isLastMeasure = measureIndex === measures.length - 1;
       if (isLastMeasure) {
         log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
@@ -1114,7 +1122,7 @@
     // corde+frette à la place d'une hauteur. Pas de débordement inter-mesure pour un triolet, comme
     // côté score.
     function placeTabTripletGroupAt(trackIndex, measureIndex, localIndex, baseDuration, string, fret) {
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'rest') {
         log('Un triolet ne peut être placé que sur un silence dans ce spike.');
@@ -1147,7 +1155,7 @@
     // déjà posée qu'on veut corriger. Préserve systématiquement les métadonnées du groupe
     // (tupletGroup/tupletId/tupletWrittenBeats/beats), seules corde+frette changent.
     function fillTabTripletSlot(trackIndex, measureIndex, localIndex, string, fret) {
-      const m = tracks[trackIndex].measures[measureIndex];
+      const m = tracks[trackIndex].staves[0].measures[measureIndex];
       const target = m[localIndex];
       m[localIndex] = { type: 'note', string, fret, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
       log(`Note de triolet tab (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → corde ${string}, case ${fret}.`);
@@ -1499,8 +1507,8 @@
         return;
       }
 
-      if (tracks[trackIndex] && tracks[trackIndex].staffType === 'tabs') {
-        const measures = tracks[trackIndex].measures;
+      if (tracks[trackIndex] && tracks[trackIndex].staves[0].staffType === 'tabs') {
+        const measures = tracks[trackIndex].staves[0].measures;
         const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
         const clickedPos = { trackIndex, measureIndex, localIndex: effectiveBeat.index };
         if (!isSameSelection(selectedNote, clickedPos)) {
@@ -1518,7 +1526,7 @@
 
         const lookup = api.boundsLookup;
         const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
-        const stringCount = tracks[trackIndex].tuning.split(' ').length;
+        const stringCount = tracks[trackIndex].staves[0].tuning.split(' ').length;
         const targetString = bounds ? stringFromY(lastPointerY, bounds.visualBounds || bounds.realBounds, stringCount) : 1;
         const tripletActive = document.getElementById('tripletToggle').checked;
 
@@ -1575,7 +1583,7 @@
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      const measures = tracks[trackIndex] && tracks[trackIndex].measures;
+      const measures = tracks[trackIndex] && tracks[trackIndex].staves[0].measures;
       const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
 
@@ -1619,7 +1627,7 @@
       insertMeasureAt(selectedMeasureIndex + 1);
     });
     document.getElementById('appendMeasureBtn').addEventListener('click', () => {
-      insertMeasureAt(tracks[0].measures.length);
+      insertMeasureAt(tracks[0].staves[0].measures.length);
     });
     document.getElementById('deleteMeasureBtn').addEventListener('click', () => {
       if (selectedMeasureIndex === null) { log('Aucune mesure sélectionnée — clique sur un numéro de mesure d\'abord.'); return; }
