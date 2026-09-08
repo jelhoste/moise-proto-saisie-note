@@ -327,11 +327,7 @@
         },
         display: {
           staveProfile: 'Score',
-          // TEMPORAIRE — diagnostic du crash "Cannot read properties of undefined (reading
-          // 'staves')" : layout repassé en 'Page' pour vérifier si l'erreur vient spécifiquement
-          // du layout Horizontal avec une piste tab isolée (remettre 'Horizontal' une fois le test
-          // conclu) :
-          layoutMode: 'Page'
+          layoutMode: 'Horizontal'
         }
       });
       log('AlphaTabApi créée sans exception.');
@@ -361,9 +357,15 @@
       // il faut explicitement demander le rendu des autres via renderTracks(). Confirmé par la doc/
       // les discussions officielles, ce n'est pas un problème de syntaxe alphaTex.
       const tracksToRender = (score && score.tracks) || (api.score && api.score.tracks) || [];
-      if (tracksToRender.length) {
+      // TEMPORAIRE — diagnostic du crash "reading 'staves'" : avec une seule piste, celle-ci est
+      // déjà rendue par défaut, donc cet appel devient redondant et pourrait déclencher un rendu
+      // concurrent au premier (déjà en cours), corrompant l'état interne d'alphaTab. On saute
+      // l'appel dans ce cas précis pour vérifier l'hypothèse.
+      if (tracksToRender.length > 1) {
         log(`Rendu explicite de ${tracksToRender.length} piste(s) via renderTracks().`);
         api.renderTracks(tracksToRender);
+      } else {
+        log(`Une seule piste (${tracksToRender.length}) — renderTracks() sauté, déjà rendue par défaut (diagnostic).`);
       }
     });
 
