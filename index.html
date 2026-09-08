@@ -332,7 +332,24 @@
         const bars = buildTrackBars(t.measures);
         return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${buildTuningToken(t)} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
       });
-      return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')}`;
+      return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')} ${buildExtraRenderTestTracksTex()}`;
+    }
+
+    // Pistes de TEST, rendu seul, hors du tableau tracks[] (donc hors de toute interactivité —
+    // voir le garde-fou !tracks[trackIndex] dans beatMouseUp). Objectif : valider visuellement
+    // deux types de piste qui ne rentrent pas dans notre modèle actuel (1 piste = 1 portée) :
+    //
+    // - Grand staff : d'après la doc (structural-metadata, \staff), ce n'est PAS un nouveau type de
+    //   \staff{...} — c'est UNE piste avec DEUX blocs \staff{score}, le second avec \clef F4.
+    // - Percussion : ce n'est pas non plus un type de \staff{...} — c'est \instrument percussion
+    //   sur une piste normale ; les notes s'écrivent par nom d'articulation (\articulation defaults
+    //   les enregistre), pas par hauteur ni corde+frette.
+    //
+    // Les deux exemples ci-dessous reprennent quasi mot pour mot les exemples officiels de la doc.
+    function buildExtraRenderTestTracksTex() {
+      const grandStaff = `\\track "Piano Grand Staff (test rendu)" "gr." \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 c4 d4 e4 f4 | c4 d4 e4 f4 \\staff{score} \\tuning piano \\clef F4 \\ts 4 4 c2 c2 c2 c2 | c2 c2 c2 c2`;
+      const percussion = `\\track "Batterie (test rendu)" \\instrument percussion \\clef neutral \\articulation defaults \\ts 4 4 :4 (KickHit RideBell) r KickHit KickHit | :4 (KickHit RideBell) r KickHit KickHit`;
+      return `${grandStaff} ${percussion}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -1471,6 +1488,16 @@
         }
       }
       log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
+
+      if (!tracks[trackIndex]) {
+        // Piste hors de notre tableau tracks[] — typiquement une piste de test ajoutée pour
+        // valider un rendu (grand staff, percussion...), pas encore interactive. On désélectionne
+        // proprement (cohérent avec "clic ailleurs") et on ignore, sans toucher au modèle.
+        deselectNote('clic sur une piste de test, rendu seul (non interactive)');
+        deselectMeasure('clic sur une piste de test, rendu seul (non interactive)');
+        log(`Piste ${trackIndex} hors de notre modèle interactif (piste de test, rendu seul) — clic ignoré.`);
+        return;
+      }
 
       if (tracks[trackIndex] && tracks[trackIndex].staffType === 'tabs') {
         const measures = tracks[trackIndex].measures;
