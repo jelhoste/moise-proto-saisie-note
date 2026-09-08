@@ -43,8 +43,8 @@
   .fretBtn.current { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   #fretPickerClose { margin-top: 10px; width: 100%; }
 
-  @media (max-width: 700px) {
-    #fretPicker { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; border-radius: 12px 12px 0 0; max-height: 70vh; overflow-y: auto; }
+  @media (max-width: 480px) {
+    #fretPicker.phone-mode { border-radius: 12px 12px 0 0; max-height: 70vh; overflow-y: auto; }
   }
 </style>
 </head>
@@ -1203,22 +1203,68 @@
       modal.classList.add('open');
       overlay.classList.add('open');
 
-      // Ancrage près du clic sur grand écran ; la media query CSS (≤700px) force une modale bas
-      // d'écran sur tablette/téléphone et ignore ce positionnement (left/top en !important).
-      requestAnimationFrame(() => {
-        const rect = modal.getBoundingClientRect();
+      fretPickerAnchor = { clientX, clientY };
+      requestAnimationFrame(positionFretPicker);
+    }
+
+    // Seuil dédié téléphone (tablette reste en mode flottant comme le desktop) — décision prise
+    // ensemble : la tablette a la place pour un popup ancré, le téléphone préfère le bas d'écran.
+    const PHONE_MAX_WIDTH = 480;
+    function isPhoneMode() {
+      return window.matchMedia(`(max-width: ${PHONE_MAX_WIDTH}px)`).matches;
+    }
+
+    // Point clé (doc CSSOM View / WICG visual-viewport) : position:fixed se positionne toujours
+    // par rapport au viewport de MISE EN PAGE, qui ne bouge pas pendant un pincer-zoomer — seul le
+    // viewport VISUEL (ce qu'on voit réellement) rétrécit. window.visualViewport expose ce second
+    // repère (offsetLeft/offsetTop/width/height), qu'on utilise ici pour que le popup reste bien
+    // dans la zone effectivement visible, y compris zoomé. clientX/clientY (capturés au clic) sont
+    // déjà dans le même repère que position:fixed (confirmé — pas de conversion nécessaire), le
+    // seul point réellement fautif était l'absence de bornage sur le bon rectangle visible.
+    let fretPickerAnchor = null;
+
+    function positionFretPicker() {
+      const modal = document.getElementById('fretPicker');
+      if (!modal.classList.contains('open') || !fretPickerAnchor) return;
+
+      const vv = window.visualViewport;
+      const vLeft = vv ? vv.offsetLeft : 0;
+      const vTop = vv ? vv.offsetTop : 0;
+      const vWidth = vv ? vv.width : window.innerWidth;
+      const vHeight = vv ? vv.height : window.innerHeight;
+      const rect = modal.getBoundingClientRect();
+
+      if (isPhoneMode()) {
+        modal.classList.add('phone-mode');
+        modal.style.width = `${vWidth}px`;
+        modal.style.left = `${vLeft}px`;
+        modal.style.top = `${vTop + vHeight - rect.height}px`;
+      } else {
+        modal.classList.remove('phone-mode');
+        modal.style.width = '';
+        const { clientX, clientY } = fretPickerAnchor;
         let left = clientX;
         let top = clientY - rect.height - 10;
-        if (top < 8) top = clientY + 20;
-        left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+        if (top < vTop + 8) top = clientY + 20;
+        left = Math.max(vLeft + 8, Math.min(left, vLeft + vWidth - rect.width - 8));
+        top = Math.max(vTop + 8, Math.min(top, vTop + vHeight - rect.height - 8));
         modal.style.left = `${left}px`;
         modal.style.top = `${top}px`;
-      });
+      }
+    }
+
+    // Suivi en direct pendant un zoom/pan alors que le popup est déjà ouvert (pas seulement à
+    // l'ouverture) — sinon un zoom fait APRÈS ouverture laisserait le popup mal placé jusqu'au
+    // prochain clic.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', positionFretPicker);
+      window.visualViewport.addEventListener('scroll', positionFretPicker);
     }
 
     function closeFretPicker() {
       document.getElementById('fretPicker').classList.remove('open');
       document.getElementById('fretPickerOverlay').classList.remove('open');
+      fretPickerAnchor = null;
     }
 
     document.getElementById('fretPickerClose').addEventListener('click', closeFretPicker);
