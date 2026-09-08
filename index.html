@@ -32,7 +32,7 @@
      left/top calculés en JS), converti en modale plein-largeur remontant du bas sur petit écran
      (tablette/téléphone) via la media query ci-dessous — comportement plus confortable au pouce et
      qui évite tout débordement d'écran. */
-  #fretPicker { position: fixed; z-index: 50; background: #fff; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 12px; display: none; max-width: 320px; }
+  #fretPicker { position: fixed; z-index: 50; background: #fff; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 12px; display: none; width: 260px; max-width: 320px; box-sizing: border-box; }
   #fretPicker.open { display: block; }
   #fretPickerOverlay { position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.15); display: none; }
   #fretPickerOverlay.open { display: block; }
@@ -44,7 +44,7 @@
   #fretPickerClose { margin-top: 10px; width: 100%; }
 
   @media (max-width: 700px) {
-    #fretPicker { left: 0 !important; right: 0; top: auto !important; bottom: 0; max-width: none; border-radius: 12px 12px 0 0; max-height: 70vh; overflow-y: auto; }
+    #fretPicker { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; border-radius: 12px 12px 0 0; max-height: 70vh; overflow-y: auto; }
   }
 </style>
 </head>
