@@ -21,7 +21,7 @@
      travailler dans des conditions proches du fonctionnement final (menus flottants), pas encore
      l'apparence définitive. */
   #controlsOverlay { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: rgba(255,255,255,0.97); border-top: 1px solid #ccc; height: 40vh; overflow-y: auto; padding: 10px 16px; box-sizing: border-box; }
-  #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 10px; height: 110px; overflow-y: auto; border-radius: 6px; }
+  #log { font-family: monospace; font-size: 12px; background: #111; color: #0f0; padding: 10px; margin-top: 10px; height: 110px; overflow-y: auto; border-radius: 6px; white-space: pre-wrap; }
   button { margin-top: 8px; padding: 6px 14px; }
   #durationPalette { margin-top: 8px; }
   .paletteLabel { font-size: 13px; color: #555; margin-right: 4px; }
@@ -327,7 +327,11 @@
         },
         display: {
           staveProfile: 'Score',
-          layoutMode: 'Horizontal'
+          // TEMPORAIRE — diagnostic du crash "Cannot read properties of undefined (reading
+          // 'staves')" : layout repassé en 'Page' pour vérifier si l'erreur vient spécifiquement
+          // du layout Horizontal avec une piste tab isolée (remettre 'Horizontal' une fois le test
+          // conclu) :
+          layoutMode: 'Page'
         }
       });
       log('AlphaTabApi créée sans exception.');
@@ -363,8 +367,14 @@
       }
     });
 
+    // Purement cosmétique pour la lisibilité du log — le tex réellement envoyé à alphaTab
+    // (buildTex(), passé tel quel à api.tex()) n'est pas modifié, seul l'affichage l'est.
+    function formatTexForLog(tex) {
+      return tex.replace(/\s*(\\title|\\tempo|\\track|\\staff\{[^}]*\}|\\tuning|\\instrument|\\ts)/g, '\n$1').trim();
+    }
+
     function render() {
-      log(`Appel api.tex(...) avec: ${buildTex()}`);
+      log(`Appel api.tex(...) avec:\n${formatTexForLog(buildTex())}`);
       try {
         api.tex(buildTex());
       } catch (err) {
