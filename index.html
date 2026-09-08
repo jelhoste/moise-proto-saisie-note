@@ -976,8 +976,9 @@
     }
 
     // Placement/édition d'une note de tablature (corde+frette), déclenché depuis le popup de
-    // saisie. Volontairement plus simple que placeNoteAt : pas de débordement sur la mesure
-    // suivante, pas de triolets — hors scope pour cette première version de la saisie tab.
+    // saisie. Même structure que placeNoteAt (y compris le débordement "cas 3" sur la mesure
+    // suivante), avec la corde+frette à la place d'une hauteur nommée. Pas de triolets ici — gérés
+    // séparément par placeTabTripletGroupAt/fillTabTripletSlot, comme côté score.
     function placeTabNoteAt(trackIndex, measureIndex, localIndex, duration, string, fret) {
       const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
       if (!currentMeasure) {
@@ -992,8 +993,7 @@
 
       // Édition d'une note déjà posée : on la traite comme un silence de même durée pour le calcul
       // de l'espace disponible (elle sera de toute façon remplacée) — permet d'agrandir ou de
-      // réduire sa durée dans la limite de l'espace contigu autour d'elle, sans dupliquer la
-      // logique de calcul plus bas.
+      // réduire sa durée dans la limite de l'espace contigu autour d'elle.
       let workingMeasure = currentMeasure;
       if (target.type === 'note') {
         workingMeasure = currentMeasure.slice();
@@ -1003,55 +1003,149 @@
       const startPos = startPositionOf(workingMeasure, localIndex);
       const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(workingMeasure, localIndex);
 
-      if (duration > availableInMeasure + EPS) {
-        log(`REJET — durée ${duration} demandée mais seulement ${availableInMeasure} temps disponibles ici (${tracks[trackIndex].name}, mesure ${measureIndex}). Pas de débordement sur la mesure suivante pour la tab dans ce spike.`);
+      if (duration <= availableInMeasure + EPS) {
+        const remaining = availableInMeasure - duration;
+        const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
+        const newElements = [{ type: 'note', string, fret, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
+        currentMeasure.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
+        log(`Note tab placée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) — corde ${string}, case ${fret}, ${duration} temps.`);
+        render();
         return;
       }
 
-      const remaining = availableInMeasure - duration;
-      const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
-      const newElements = [{ type: 'note', string, fret, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
-      currentMeasure.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
-      log(`Note tab placée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) — corde ${string}, case ${fret}, ${duration} temps.`);
+      // Débordement : uniquement pour un NOUVEAU placement sur un silence en fin de mesure — comme
+      // côté score, l'édition d'une note déjà posée ne peut pas déborder dans ce spike.
+      if (target.type === 'note') {
+        log(`REJET — l'édition d'une note existante ne peut pas déborder sur la mesure suivante (besoin ${duration}, disponible ${availableInMeasure}).`);
+        return;
+      }
+
+      const reachesEndOfMeasure = (startPos + availableInMeasure) >= MEASURE_BEATS - EPS;
+      if (!reachesEndOfMeasure) {
+        log(`REJET — durée ${duration} demandée mais un obstacle bloque avant la fin de la mesure ${measureIndex} (${tracks[trackIndex].name}, espace dispo: ${availableInMeasure}).`);
+        return;
+      }
+
+      const measures = tracks[trackIndex].measures;
+      const isLastMeasure = measureIndex === measures.length - 1;
+      if (isLastMeasure) {
+        log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
+        return;
+      }
+
+      const nextMeasure = measures[measureIndex + 1];
+      const part2Total = duration - availableInMeasure;
+      if (part2Total > MEASURE_BEATS + EPS) {
+        log(`REJET — le débordement nécessiterait plus d'une mesure suivante (${part2Total} temps demandés) — plafonné à 1 mesure.`);
+        return;
+      }
+
+      const nextSpan = contiguousRestSpan(nextMeasure, 0);
+      if (nextSpan.totalBeats < part2Total - EPS) {
+        log(`REJET — pas assez de place en tout début de la mesure suivante (besoin ${part2Total}, disponible ${nextSpan.totalBeats}).`);
+        return;
+      }
+
+      const part1Durations = legalRestBreakdown(availableInMeasure, startPos);
+      const part2Durations = legalRestBreakdown(part2Total, 0);
+      const allDurations = [...part1Durations, ...part2Durations];
+      const tiedNotes = allDurations.map((beats, i) => ({ type: 'note', string, fret, beats, tied: i > 0 }));
+
+      log(`DÉBORDEMENT (tab, ${tracks[trackIndex].name}) — corde ${string} case ${fret} de ${duration} temps scindée en [${allDurations.join(' + ')}] liée(s), à cheval mesures ${measureIndex}→${measureIndex + 1}.`);
+
+      currentMeasure.splice(localIndex, endIndexExclusive - localIndex, ...tiedNotes.slice(0, part1Durations.length));
+
+      const remainingInNext = nextSpan.totalBeats - part2Total;
+      const nextRestBreakdown = legalRestBreakdown(remainingInNext, part2Total);
+      nextMeasure.splice(0, nextSpan.endIndexExclusive, ...tiedNotes.slice(part1Durations.length), ...nextRestBreakdown.map(b => ({ type: 'rest', beats: b })));
+
       render();
     }
 
-    // Popup de saisie tab : 25 boutons (cases 0 à 24) + choix de durée, pré-rempli sur la note
-    // existante en cas d'édition, sur la durée active de la palette sinon. Réutilisé pour poser
-    // une note ET pour en modifier une déjà posée (même popup, décision prise ensemble).
+    // Triolet tab — même structure que placeTripletGroupAt/fillTripletSlot côté score, avec
+    // corde+frette à la place d'une hauteur. Pas de débordement inter-mesure pour un triolet, comme
+    // côté score.
+    function placeTabTripletGroupAt(trackIndex, measureIndex, localIndex, baseDuration, string, fret) {
+      const m = tracks[trackIndex].measures[measureIndex];
+      const target = m[localIndex];
+      if (!target || target.type !== 'rest') {
+        log('Un triolet ne peut être placé que sur un silence dans ce spike.');
+        return;
+      }
+      const groupTotal = baseDuration * 2;
+      const startPos = startPositionOf(m, localIndex);
+      const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(m, localIndex);
+
+      if (groupTotal > availableInMeasure + EPS) {
+        log(`REJET — le triolet (${groupTotal} temps au total) ne tient pas dans l'espace contigu disponible (${availableInMeasure}). Débordement non géré pour les triolets dans ce spike.`);
+        return;
+      }
+
+      const perNoteBeats = groupTotal / 3;
+      const tupletId = nextTupletId++;
+      const tripletElements = [
+        { type: 'note', string, fret, beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId },
+        { type: 'rest', beats: perNoteBeats, tupletWrittenBeats: baseDuration, tupletGroup: 3, tupletId }
+      ];
+      const remaining = availableInMeasure - groupTotal;
+      const restBreakdown = legalRestBreakdown(remaining, startPos + groupTotal);
+      m.splice(localIndex, endIndexExclusive - localIndex, ...tripletElements, ...restBreakdown.map(b => ({ type: 'rest', beats: b })));
+      log(`Triolet tab placé (${tracks[trackIndex].name}, mesure ${measureIndex}, position ${startPos}) — 1ère note corde ${string} case ${fret} (${perNoteBeats.toFixed(3)} temps), 2 silences de triolet à remplir + silences [${restBreakdown.join(', ')}]`);
+      render();
+    }
+
+    // Remplit (ou re-choisit la corde/frette d')un élément de triolet — silence encore vide OU note
+    // déjà posée qu'on veut corriger. Préserve systématiquement les métadonnées du groupe
+    // (tupletGroup/tupletId/tupletWrittenBeats/beats), seules corde+frette changent.
+    function fillTabTripletSlot(trackIndex, measureIndex, localIndex, string, fret) {
+      const m = tracks[trackIndex].measures[measureIndex];
+      const target = m[localIndex];
+      m[localIndex] = { type: 'note', string, fret, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
+      log(`Note de triolet tab (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → corde ${string}, case ${fret}.`);
+      render();
+    }
+
+    // Popup de saisie tab : 25 boutons (cases 0 à 24), avec ou sans sélecteur de durée selon le
+    // contexte (masqué pour un élément de triolet, dont la durée est fixée par le groupe). Piloté
+    // par callback (onConfirm) plutôt que d'appeler directement une fonction de placement, pour
+    // rester utilisable aussi bien en placement normal qu'en triolet (nouveau groupe ou remplissage
+    // d'un silence/note existante du groupe).
     const DURATION_CHOICES = [[4, 'Ronde'], [2, 'Blanche'], [1, 'Noire'], [0.5, 'Croche'], [0.25, 'Double-croche']];
     let fretPickerDuration = 1;
 
-    function openFretPicker(trackIndex, measureIndex, localIndex, targetString, existingNote, clientX, clientY) {
-      fretPickerDuration = existingNote ? existingNote.beats : selectedDuration;
+    function openFretPicker(opts) {
+      const { title, targetString, existingFret, showDurationPicker, initialDuration, clientX, clientY, onConfirm } = opts;
+      fretPickerDuration = initialDuration;
 
-      document.getElementById('fretPickerTitle').textContent = existingNote
-        ? `Modifier la note — corde ${targetString}, case actuelle ${existingNote.fret}`
-        : `Nouvelle note — corde ${targetString}`;
+      document.getElementById('fretPickerTitle').textContent = title;
 
       const durWrap = document.getElementById('fretPickerDurations');
       durWrap.innerHTML = '';
-      for (const [beats, label] of DURATION_CHOICES) {
-        const b = document.createElement('button');
-        b.className = 'durBtn' + (Math.abs(beats - fretPickerDuration) < EPS ? ' active' : '');
-        b.textContent = label;
-        b.addEventListener('click', () => {
-          fretPickerDuration = beats;
-          durWrap.querySelectorAll('.durBtn').forEach(x => x.classList.remove('active'));
-          b.classList.add('active');
-        });
-        durWrap.appendChild(b);
+      durWrap.style.display = showDurationPicker ? 'flex' : 'none';
+      if (showDurationPicker) {
+        for (const [beats, label] of DURATION_CHOICES) {
+          const b = document.createElement('button');
+          b.className = 'durBtn' + (Math.abs(beats - fretPickerDuration) < EPS ? ' active' : '');
+          b.textContent = label;
+          b.addEventListener('click', () => {
+            fretPickerDuration = beats;
+            durWrap.querySelectorAll('.durBtn').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+          });
+          durWrap.appendChild(b);
+        }
       }
 
       const grid = document.getElementById('fretPickerGrid');
       grid.innerHTML = '';
       for (let fret = 0; fret <= 24; fret++) {
         const b = document.createElement('button');
-        b.className = 'fretBtn' + (existingNote && existingNote.fret === fret ? ' current' : '');
+        b.className = 'fretBtn' + (existingFret === fret ? ' current' : '');
         b.textContent = String(fret);
         b.addEventListener('click', () => {
-          placeTabNoteAt(trackIndex, measureIndex, localIndex, fretPickerDuration, targetString, fret);
-          syncDurationPaletteToBeats(fretPickerDuration);
+          onConfirm(fret, fretPickerDuration);
+          if (showDurationPicker) syncDurationPaletteToBeats(fretPickerDuration);
           closeFretPicker();
         });
         grid.appendChild(b);
@@ -1287,10 +1381,48 @@
         const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
         const stringCount = tracks[trackIndex].tuning.split(' ').length;
         const targetString = bounds ? stringFromY(lastPointerY, bounds.visualBounds || bounds.realBounds, stringCount) : 1;
+        const tripletActive = document.getElementById('tripletToggle').checked;
 
-        const existingNote = clickedTarget && clickedTarget.type === 'note' ? clickedTarget : null;
-        log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=${existingNote ? `note existante (case ${existingNote.fret})` : 'silence'}.`);
-        openFretPicker(trackIndex, measureIndex, effectiveBeat.index, targetString, existingNote, lastPointerClientX, lastPointerClientY);
+        if (clickedTarget && clickedTarget.tupletGroup) {
+          // Silence de triolet à remplir OU note de triolet déjà posée qu'on corrige — même popup,
+          // durée masquée (fixée par le groupe).
+          log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=élément de triolet (${clickedTarget.type === 'note' ? `note existante case ${clickedTarget.fret}` : 'silence à remplir'}).`);
+          openFretPicker({
+            title: `Triolet — corde ${targetString}`,
+            targetString,
+            existingFret: clickedTarget.type === 'note' ? clickedTarget.fret : null,
+            showDurationPicker: false,
+            initialDuration: clickedTarget.beats,
+            clientX: lastPointerClientX,
+            clientY: lastPointerClientY,
+            onConfirm: (fret) => fillTabTripletSlot(trackIndex, measureIndex, effectiveBeat.index, targetString, fret)
+          });
+        } else if (tripletActive && clickedTarget && clickedTarget.type === 'rest') {
+          log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=nouveau triolet (silence).`);
+          openFretPicker({
+            title: `Triolet — 1ère note, corde ${targetString}`,
+            targetString,
+            existingFret: null,
+            showDurationPicker: true,
+            initialDuration: selectedDuration,
+            clientX: lastPointerClientX,
+            clientY: lastPointerClientY,
+            onConfirm: (fret, duration) => placeTabTripletGroupAt(trackIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
+          });
+        } else {
+          const existingNote = clickedTarget && clickedTarget.type === 'note' ? clickedTarget : null;
+          log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=${existingNote ? `note existante (case ${existingNote.fret})` : 'silence'}.`);
+          openFretPicker({
+            title: existingNote ? `Modifier la note — corde ${targetString}` : `Nouvelle note — corde ${targetString}`,
+            targetString,
+            existingFret: existingNote ? existingNote.fret : null,
+            showDurationPicker: true,
+            initialDuration: existingNote ? existingNote.beats : selectedDuration,
+            clientX: lastPointerClientX,
+            clientY: lastPointerClientY,
+            onConfirm: (fret, duration) => placeTabNoteAt(trackIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
+          });
+        }
         return;
       }
 
