@@ -1477,7 +1477,7 @@
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
         fillTripletSlot(trackIndex, measureIndex, effectiveBeat.index, pitch);
-      } else if (tripletActive) {
+      } else if (tripletActive && clickedTarget && clickedTarget.type === 'rest') {
         placeTripletGroupAt(trackIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch);
       } else {
         placeNoteAt(trackIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch, effectiveBeat);
