@@ -27,6 +27,25 @@
   .paletteLabel { font-size: 13px; color: #555; margin-right: 4px; }
   .durBtn, .modBtn { margin: 0 4px 0 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
   .durBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+
+  /* Popup de saisie tablature (corde+frette) : ancré près du clic sur grand écran (position:fixed,
+     left/top calculés en JS), converti en modale plein-largeur remontant du bas sur petit écran
+     (tablette/téléphone) via la media query ci-dessous — comportement plus confortable au pouce et
+     qui évite tout débordement d'écran. */
+  #fretPicker { position: fixed; z-index: 50; background: #fff; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 12px; display: none; max-width: 320px; }
+  #fretPicker.open { display: block; }
+  #fretPickerOverlay { position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.15); display: none; }
+  #fretPickerOverlay.open { display: block; }
+  #fretPickerTitle { font-size: 13px; color: #555; margin: 0 0 8px; }
+  #fretPickerDurations { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  #fretPickerGrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .fretBtn { padding: 8px 0; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; font-size: 13px; text-align: center; }
+  .fretBtn.current { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  #fretPickerClose { margin-top: 10px; width: 100%; }
+
+  @media (max-width: 700px) {
+    #fretPicker { left: 0 !important; right: 0; top: auto !important; bottom: 0; max-width: none; border-radius: 12px 12px 0 0; max-height: 70vh; overflow-y: auto; }
+  }
 </style>
 </head>
 <body>
@@ -35,6 +54,14 @@
   <div id="alphaTab"></div>
   <div id="selectionHighlight"></div>
   <div id="measureHandles"></div>
+</div>
+
+<div id="fretPickerOverlay"></div>
+<div id="fretPicker">
+  <p id="fretPickerTitle"></p>
+  <div id="fretPickerDurations"></div>
+  <div id="fretPickerGrid"></div>
+  <button id="fretPickerClose">Annuler</button>
 </div>
 
 <div id="controlsOverlay">
@@ -275,6 +302,9 @@
             tokens.push('r');
           } else if (el.tied) {
             tokens.push('-');
+          } else if (el.string !== undefined) {
+            // Note de tablature : notation fret.string (doc alphaTab, document-structure#fretted-notes).
+            tokens.push(`${el.fret}.${el.string}`);
           } else {
             tokens.push(el.pitch);
           }
@@ -292,22 +322,9 @@
       return track.staffType === 'tabs' ? `(${track.tuning})` : track.tuning;
     }
 
-    // Doc officielle (alphatab.net/docs/alphatex/structural-metadata, section \staff → tabs) :
-    // "Guitar tabs are only shown if the contained notes are stringed/fretted notes." Une piste
-    // tab qui ne contient que des silences reste donc invisible, même si tout le reste est correct
-    // — d'où cette démo à base de notes frettées (fret.corde), le temps que la saisie interactive
-    // en corde+frette soit construite pour ce type de piste.
-    function buildTabDemoBars(measureCount) {
-      const bars = [];
-      for (let i = 0; i < measureCount; i++) {
-        bars.push(i === 0 ? ':4 0.6 2.5 3.4 r' : 'r');
-      }
-      return bars.join(' | ');
-    }
-
     function buildTex() {
       const trackBlocks = tracks.map(t => {
-        const bars = t.staffType === 'tabs' ? buildTabDemoBars(t.measures.length) : buildTrackBars(t.measures);
+        const bars = buildTrackBars(t.measures);
         return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${buildTuningToken(t)} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
       });
       return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')}`;
@@ -396,6 +413,16 @@
     function noteAtStep(stepIndex) {
       const idx = Math.max(0, Math.min(DIATONIC_RANGE.length - 1, F5_INDEX - stepIndex));
       return DIATONIC_RANGE[idx];
+    }
+
+    // Équivalent de pitchFromY pour une tablature : les N lignes de la portée tab sont réparties
+    // uniformément entre bounds.y (corde 1, la plus aiguë, en haut) et bounds.y + bounds.h (corde
+    // N, la plus grave, en bas) — convention confirmée par la doc alphaTab (fret.string, string 1 =
+    // corde la plus haute).
+    function stringFromY(y, staffBounds, stringCount) {
+      if (!staffBounds || !staffBounds.h) return 1;
+      const raw = 1 + ((y - staffBounds.y) / staffBounds.h) * (stringCount - 1);
+      return Math.max(1, Math.min(stringCount, Math.round(raw)));
     }
 
     function pitchFromY(y, staffBounds) {
@@ -948,6 +975,114 @@
       render();
     }
 
+    // Placement/édition d'une note de tablature (corde+frette), déclenché depuis le popup de
+    // saisie. Volontairement plus simple que placeNoteAt : pas de débordement sur la mesure
+    // suivante, pas de triolets — hors scope pour cette première version de la saisie tab.
+    function placeTabNoteAt(trackIndex, measureIndex, localIndex, duration, string, fret) {
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].measures[measureIndex];
+      if (!currentMeasure) {
+        log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
+        return;
+      }
+      const target = currentMeasure[localIndex];
+      if (!target) {
+        log(`Battement d'index ${localIndex} introuvable (${tracks[trackIndex].name}, mesure ${measureIndex}).`);
+        return;
+      }
+
+      // Édition d'une note déjà posée : on la traite comme un silence de même durée pour le calcul
+      // de l'espace disponible (elle sera de toute façon remplacée) — permet d'agrandir ou de
+      // réduire sa durée dans la limite de l'espace contigu autour d'elle, sans dupliquer la
+      // logique de calcul plus bas.
+      let workingMeasure = currentMeasure;
+      if (target.type === 'note') {
+        workingMeasure = currentMeasure.slice();
+        workingMeasure[localIndex] = { type: 'rest', beats: target.beats };
+      }
+
+      const startPos = startPositionOf(workingMeasure, localIndex);
+      const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(workingMeasure, localIndex);
+
+      if (duration > availableInMeasure + EPS) {
+        log(`REJET — durée ${duration} demandée mais seulement ${availableInMeasure} temps disponibles ici (${tracks[trackIndex].name}, mesure ${measureIndex}). Pas de débordement sur la mesure suivante pour la tab dans ce spike.`);
+        return;
+      }
+
+      const remaining = availableInMeasure - duration;
+      const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
+      const newElements = [{ type: 'note', string, fret, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
+      currentMeasure.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
+      log(`Note tab placée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) — corde ${string}, case ${fret}, ${duration} temps.`);
+      render();
+    }
+
+    // Popup de saisie tab : 25 boutons (cases 0 à 24) + choix de durée, pré-rempli sur la note
+    // existante en cas d'édition, sur la durée active de la palette sinon. Réutilisé pour poser
+    // une note ET pour en modifier une déjà posée (même popup, décision prise ensemble).
+    const DURATION_CHOICES = [[4, 'Ronde'], [2, 'Blanche'], [1, 'Noire'], [0.5, 'Croche'], [0.25, 'Double-croche']];
+    let fretPickerDuration = 1;
+
+    function openFretPicker(trackIndex, measureIndex, localIndex, targetString, existingNote, clientX, clientY) {
+      fretPickerDuration = existingNote ? existingNote.beats : selectedDuration;
+
+      document.getElementById('fretPickerTitle').textContent = existingNote
+        ? `Modifier la note — corde ${targetString}, case actuelle ${existingNote.fret}`
+        : `Nouvelle note — corde ${targetString}`;
+
+      const durWrap = document.getElementById('fretPickerDurations');
+      durWrap.innerHTML = '';
+      for (const [beats, label] of DURATION_CHOICES) {
+        const b = document.createElement('button');
+        b.className = 'durBtn' + (Math.abs(beats - fretPickerDuration) < EPS ? ' active' : '');
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          fretPickerDuration = beats;
+          durWrap.querySelectorAll('.durBtn').forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+        });
+        durWrap.appendChild(b);
+      }
+
+      const grid = document.getElementById('fretPickerGrid');
+      grid.innerHTML = '';
+      for (let fret = 0; fret <= 24; fret++) {
+        const b = document.createElement('button');
+        b.className = 'fretBtn' + (existingNote && existingNote.fret === fret ? ' current' : '');
+        b.textContent = String(fret);
+        b.addEventListener('click', () => {
+          placeTabNoteAt(trackIndex, measureIndex, localIndex, fretPickerDuration, targetString, fret);
+          syncDurationPaletteToBeats(fretPickerDuration);
+          closeFretPicker();
+        });
+        grid.appendChild(b);
+      }
+
+      const modal = document.getElementById('fretPicker');
+      const overlay = document.getElementById('fretPickerOverlay');
+      modal.classList.add('open');
+      overlay.classList.add('open');
+
+      // Ancrage près du clic sur grand écran ; la media query CSS (≤700px) force une modale bas
+      // d'écran sur tablette/téléphone et ignore ce positionnement (left/top en !important).
+      requestAnimationFrame(() => {
+        const rect = modal.getBoundingClientRect();
+        let left = clientX;
+        let top = clientY - rect.height - 10;
+        if (top < 8) top = clientY + 20;
+        left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+        modal.style.left = `${left}px`;
+        modal.style.top = `${top}px`;
+      });
+    }
+
+    function closeFretPicker() {
+      document.getElementById('fretPicker').classList.remove('open');
+      document.getElementById('fretPickerOverlay').classList.remove('open');
+    }
+
+    document.getElementById('fretPickerClose').addEventListener('click', closeFretPicker);
+    document.getElementById('fretPickerOverlay').addEventListener('click', closeFretPicker);
+
     // Cliquer-tirer pour défiler horizontalement (et verticalement) le conteneur — souris
     // uniquement : sur tactile, le défilement natif du navigateur fait déjà ce travail sur
     // #wrap (overflow: auto), pas besoin de le dupliquer et risquer d'entrer en conflit avec lui.
@@ -996,10 +1131,14 @@
     // Point d'entrée : capture de la position (X,Y) au pointerdown (avant beatMouseUp).
     let lastPointerY = null;
     let lastPointerX = null;
+    let lastPointerClientX = null;
+    let lastPointerClientY = null;
     element.addEventListener('pointerdown', (ev) => {
       const rect = element.getBoundingClientRect();
       lastPointerX = ev.clientX - rect.left;
       lastPointerY = ev.clientY - rect.top;
+      lastPointerClientX = ev.clientX;
+      lastPointerClientY = ev.clientY;
       log(`[diag] pointerdown à x=${Math.round(lastPointerX)}, y=${Math.round(lastPointerY)} (rect height: ${Math.round(rect.height)})`);
 
       // Nouvelle interaction : on repart propre, le flag ne doit jamais survivre à un geste qu'il
@@ -1136,9 +1275,22 @@
       log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
 
       if (tracks[trackIndex] && tracks[trackIndex].staffType === 'tabs') {
-        deselectNote('clic sur une piste en tablature, non interactive pour l\'instant');
-        deselectMeasure('clic sur une piste en tablature, non interactive pour l\'instant');
-        log(`Piste "${tracks[trackIndex].name}" en tablature — pas encore de saisie interactive dessus (juste un test de rendu pour l'instant). Clic ignoré.`);
+        const measures = tracks[trackIndex].measures;
+        const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
+        const clickedPos = { trackIndex, measureIndex, localIndex: effectiveBeat.index };
+        if (!isSameSelection(selectedNote, clickedPos)) {
+          deselectNote('clic sur une cible différente de la sélection actuelle');
+        }
+        deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
+
+        const lookup = api.boundsLookup;
+        const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
+        const stringCount = tracks[trackIndex].tuning.split(' ').length;
+        const targetString = bounds ? stringFromY(lastPointerY, bounds.visualBounds || bounds.realBounds, stringCount) : 1;
+
+        const existingNote = clickedTarget && clickedTarget.type === 'note' ? clickedTarget : null;
+        log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=${existingNote ? `note existante (case ${existingNote.fret})` : 'silence'}.`);
+        openFretPicker(trackIndex, measureIndex, effectiveBeat.index, targetString, existingNote, lastPointerClientX, lastPointerClientY);
         return;
       }
 
