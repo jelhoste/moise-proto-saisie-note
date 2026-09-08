@@ -168,7 +168,7 @@
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
-        { name: 'Guitare', measures: freshMeasures(), staffType: 'tabs', tuning: 'e5 b4 g4 d4 a3 e3', instrument: 'acousticguitarsteel' }
+        { name: 'Guitare', measures: freshMeasures(), staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', instrument: 'acousticguitarsteel' }
       ];
     }
     let tracks = makeDefaultTracks();
@@ -284,10 +284,31 @@
       return barsTokens.join(' | ');
     }
 
+    // Doc officielle (alphatab.net/docs/alphatex/staff-metadata, section \tuning) : deux formes
+    // existent — \tuning piano|none|voice (mot-clé nu, mode) OU \tuning (liste de pitches), cette
+    // seconde forme exigeant des PARENTHÈSES autour de la liste. Les pistes score utilisent le
+    // mot-clé nu ; une piste tab a besoin de la forme parenthésée.
+    function buildTuningToken(track) {
+      return track.staffType === 'tabs' ? `(${track.tuning})` : track.tuning;
+    }
+
+    // Doc officielle (alphatab.net/docs/alphatex/structural-metadata, section \staff → tabs) :
+    // "Guitar tabs are only shown if the contained notes are stringed/fretted notes." Une piste
+    // tab qui ne contient que des silences reste donc invisible, même si tout le reste est correct
+    // — d'où cette démo à base de notes frettées (fret.corde), le temps que la saisie interactive
+    // en corde+frette soit construite pour ce type de piste.
+    function buildTabDemoBars(measureCount) {
+      const bars = [];
+      for (let i = 0; i < measureCount; i++) {
+        bars.push(i === 0 ? ':4 0.6 2.5 3.4 r' : 'r');
+      }
+      return bars.join(' | ');
+    }
+
     function buildTex() {
       const trackBlocks = tracks.map(t => {
-        const bars = buildTrackBars(t.measures);
-        return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${t.tuning} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
+        const bars = t.staffType === 'tabs' ? buildTabDemoBars(t.measures.length) : buildTrackBars(t.measures);
+        return `\\track "${t.name}" \\staff{${t.staffType}} \\tuning ${buildTuningToken(t)} \\instrument ${t.instrument} \\ts 4 4 ${bars}`;
       });
       return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')}`;
     }
