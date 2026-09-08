@@ -1377,6 +1377,14 @@
         }
         deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
 
+        // Clic sur une note déjà posée (triolet ou non) : on la sélectionne, comme côté score —
+        // sans ça, les boutons "Supprimer la note sélectionnée" / "Supprimer le triolet entier"
+        // n'ont aucune cible même quand le popup s'ouvre bien dessus.
+        if (clickedTarget && clickedTarget.type === 'note') {
+          selectedNote = clickedPos;
+          showSelectionHighlight(effectiveBeat);
+        }
+
         const lookup = api.boundsLookup;
         const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
         const stringCount = tracks[trackIndex].tuning.split(' ').length;
