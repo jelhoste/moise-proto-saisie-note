@@ -428,7 +428,10 @@
       }
     }
 
-    // Mapping position verticale -> note, pour une portée en clé de sol.
+    // Mapping position verticale -> note. L'ancre (quelle note se trouve sur la ligne du haut de la
+    // portée) dépend de la clé — F5 en clé de sol (défaut), A3 en clé de fa. Sans ça, une portée en
+    // clé de fa recevrait des notes calculées comme si elle était en clé de sol (bug réel rencontré
+    // en pratique : les clics tombaient presque tous autour de Fa).
     const NOTE_LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
     function buildDiatonicRange(minOct, maxOct) {
       const arr = [];
@@ -438,10 +441,15 @@
       return arr;
     }
     const DIATONIC_RANGE = buildDiatonicRange(1, 8);
-    const F5_INDEX = DIATONIC_RANGE.indexOf('F5');
+    const CLEF_TOP_LINE_PITCH = {
+      'F4': 'A3' // clé de fa : la ligne du haut correspond à La3, pas Fa5.
+      // Autres clés (alto, ténor...) non gérées dans ce spike — seules \clef null (sol, défaut) et
+      // \clef F4 (fa) sont utilisées actuellement.
+    };
 
-    function noteAtStep(stepIndex) {
-      const idx = Math.max(0, Math.min(DIATONIC_RANGE.length - 1, F5_INDEX - stepIndex));
+    function noteAtStep(stepIndex, anchorPitch) {
+      const anchorIndex = DIATONIC_RANGE.indexOf(anchorPitch);
+      const idx = Math.max(0, Math.min(DIATONIC_RANGE.length - 1, anchorIndex - stepIndex));
       return DIATONIC_RANGE[idx];
     }
 
@@ -455,8 +463,9 @@
       return Math.max(1, Math.min(stringCount, Math.round(raw)));
     }
 
-    function pitchFromY(y, staffBounds) {
+    function pitchFromY(y, staffBounds, clef) {
       if (!staffBounds || !staffBounds.h) return 'C4';
+      const anchorPitch = (clef && CLEF_TOP_LINE_PITCH[clef]) || 'F5';
       const stepPerUnit = 8 / staffBounds.h;
       let stepIndex = Math.round((y - staffBounds.y) * stepPerUnit);
       // Borne raisonnable : au-delà d'environ 6 lignes supplémentaires de chaque côté, on bloque —
@@ -469,7 +478,7 @@
         log(`Clic hors de la plage raisonnable de hauteur (step ${stepIndex}) — borné automatiquement.`);
         stepIndex = Math.max(MIN_STEP, Math.min(MAX_STEP, stepIndex));
       }
-      return noteAtStep(stepIndex);
+      return noteAtStep(stepIndex, anchorPitch);
     }
 
     // Règle métrique de remplissage automatique (inchangée, indépendante de la piste).
@@ -1609,7 +1618,7 @@
       const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
       if (bounds) {
         const b = bounds.visualBounds || bounds.realBounds;
-        pitch = pitchFromY(lastPointerY, b);
+        pitch = pitchFromY(lastPointerY, b, tracks[trackIndex].staves[staffIndex].clef);
       } else {
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
