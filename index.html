@@ -196,7 +196,14 @@
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
-        { name: 'Guitare', instrument: 'acousticguitarsteel', staves: [{ staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', clef: null, measures: freshMeasures() }] }
+        { name: 'Guitare', instrument: 'acousticguitarsteel', staves: [{ staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', clef: null, measures: freshMeasures() }] },
+        // Grand staff : une piste, deux portées (aiguë + grave/clé de fa) — première vraie piste
+        // multi-portées interactive, ce qui teste réellement l'infrastructure staffIndex des
+        // étapes 1-3.
+        { name: 'Piano Grand Staff', instrument: 'acousticgrandpiano', staves: [
+          { staffType: 'score', tuning: 'piano', clef: null, measures: freshMeasures() },
+          { staffType: 'score', tuning: 'piano', clef: 'F4', measures: freshMeasures() }
+        ] }
       ];
     }
     let tracks = makeDefaultTracks();
@@ -343,21 +350,14 @@
       return `\\title "Prototype saisie multi-pistes" \\tempo 100 . ${trackBlocks.join(' ')} ${buildExtraRenderTestTracksTex()}`;
     }
 
-    // Pistes de TEST, rendu seul, hors du tableau tracks[] (donc hors de toute interactivité —
-    // voir le garde-fou !tracks[trackIndex] dans beatMouseUp). Objectif : valider visuellement
-    // deux types de piste qui ne rentrent pas dans notre modèle actuel (1 piste = 1 portée) :
-    //
-    // - Grand staff : d'après la doc (structural-metadata, \staff), ce n'est PAS un nouveau type de
-    //   \staff{...} — c'est UNE piste avec DEUX blocs \staff{score}, le second avec \clef F4.
-    // - Percussion : ce n'est pas non plus un type de \staff{...} — c'est \instrument percussion
-    //   sur une piste normale ; les notes s'écrivent par nom d'articulation (\articulation defaults
-    //   les enregistre), pas par hauteur ni corde+frette.
-    //
-    // Les deux exemples ci-dessous reprennent quasi mot pour mot les exemples officiels de la doc.
+    // Piste de TEST, rendu seul, hors du tableau tracks[] (donc hors de toute interactivité — voir
+    // le garde-fou !tracks[trackIndex]/!tracks[trackIndex].staves[staffIndex] dans beatMouseUp).
+    // Percussion : ce n'est pas un type de \staff{...} — c'est \instrument percussion sur une piste
+    // normale ; les notes s'écrivent par nom d'articulation (\articulation defaults les enregistre),
+    // pas par hauteur ni corde+frette. L'exemple ci-dessous reprend quasi mot pour mot celui de la
+    // doc officielle. (Le grand staff, lui, est passé dans tracks[] — vraie piste interactive.)
     function buildExtraRenderTestTracksTex() {
-      const grandStaff = `\\track "Piano Grand Staff (test rendu)" "gr." \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\ts 4 4 c4 d4 e4 f4 | c4 d4 e4 f4 \\staff{score} \\tuning piano \\clef F4 \\ts 4 4 c2 c2 c2 c2 | c2 c2 c2 c2`;
-      const percussion = `\\track "Batterie (test rendu)" \\instrument percussion \\clef neutral \\articulation defaults \\ts 4 4 :4 (KickHit RideBell) r KickHit KickHit | :4 (KickHit RideBell) r KickHit KickHit`;
-      return `${grandStaff} ${percussion}`;
+      return `\\track "Batterie (test rendu)" \\instrument percussion \\clef neutral \\articulation defaults \\ts 4 4 :4 (KickHit RideBell) r KickHit KickHit | :4 (KickHit RideBell) r KickHit KickHit`;
     }
 
     const element = document.getElementById('alphaTab');
