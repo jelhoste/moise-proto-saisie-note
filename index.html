@@ -1407,11 +1407,14 @@
     // généreuses — comparer à ces limites-là (ce qu'on faisait avant) peut retomber sur la même
     // ambiguïté qu'alphaTab en interne. On compare plutôt à la position RÉELLE des 5 lignes de
     // chaque portée (qu'on sait déjà calculer précisément pour la hauteur), et on choisit la piste
-    // dont le CENTRE de portée est le plus proche du clic — bien plus robuste.
-    function getTrackStaffBounds(trackIndex, measureIndex) {
+    // ET la portée (staffIndex) dont le CENTRE est le plus proche du clic — bien plus robuste.
+    // On passe par un battement précis (findBeat) plutôt que par masterBar.bars[i] : un battement
+    // appartient sans ambiguïté à UNE SEULE portée, alors que la doc ne précise pas explicitement
+    // comment masterBar.bars indexe une piste à plusieurs portées (grand staff).
+    function getTrackStaffBounds(trackIndex, staffIndex, measureIndex) {
       try {
         const track = api.score.tracks[trackIndex];
-        const bar = track.staves[0].bars[measureIndex];
+        const bar = track.staves[staffIndex].bars[measureIndex];
         const anchorBeat = bar.voices[0].beats[0];
         const bounds = api.boundsLookup.findBeat(anchorBeat);
         if (!bounds) return null;
@@ -1424,8 +1427,10 @@
     function resolveTrackIndexByStaffCenter(y, measureIndex) {
       const centers = [];
       for (let i = 0; i < tracks.length; i++) {
-        const b = getTrackStaffBounds(i, measureIndex);
-        if (b) centers.push({ trackIndex: i, center: b.y + b.h / 2 });
+        for (let s = 0; s < tracks[i].staves.length; s++) {
+          const b = getTrackStaffBounds(i, s, measureIndex);
+          if (b) centers.push({ trackIndex: i, staffIndex: s, center: b.y + b.h / 2 });
+        }
       }
       if (!centers.length) return null;
       let best = centers[0];
@@ -1434,15 +1439,20 @@
         const d = Math.abs(y - c.center);
         if (d < bestDist) { best = c; bestDist = d; }
       }
-      return best.trackIndex;
+      return { trackIndex: best.trackIndex, staffIndex: best.staffIndex };
     }
 
     function resolveTrackAndBeatManually(x, y, measureIndex) {
-      const trackIndex = resolveTrackIndexByStaffCenter(y, measureIndex);
-      if (trackIndex === null) return null;
-      // Une fois la BONNE piste déterminée (axe Y, via le centre de portée), on retrouve le bon
-      // battement local sur l'axe X via les bornes de mesure-par-piste — fiables pour l'axe X,
-      // même si leur étendue en Y peut chevaucher la piste voisine.
+      const match = resolveTrackIndexByStaffCenter(y, measureIndex);
+      if (match === null) return null;
+      const { trackIndex, staffIndex } = match;
+      // Une fois la BONNE piste/portée déterminée (axe Y, via le centre de portée), on retrouve le
+      // bon battement local sur l'axe X via les bornes de mesure-par-piste — fiables pour l'axe X,
+      // même si leur étendue en Y peut chevaucher la portée voisine.
+      // NOTE — incertitude non résolue par la doc : masterBar.bars[trackIndex] est décrit comme "une
+      // mesure d'une PISTE", jamais explicitement d'une portée. Pour nos 3 pistes actuelles (1 seule
+      // portée chacune), trackIndex suffit forcément. À valider empiriquement dès qu'une vraie piste
+      // à 2 portées (grand staff) existera dans tracks[].
       const lookup = api.boundsLookup;
       let matchedBeat = null;
       if (lookup && lookup.staffSystems) {
@@ -1457,7 +1467,7 @@
           break;
         }
       }
-      return { trackIndex, beat: matchedBeat };
+      return { trackIndex, staffIndex, beat: matchedBeat };
     }
 
     api.beatMouseUp.on((beat) => {
@@ -1504,12 +1514,10 @@
 
       const geometricMatch = resolveTrackAndBeatManually(lastPointerX, lastPointerY, measureIndex);
       let effectiveBeat = beat;
-      if (geometricMatch !== null && geometricMatch.trackIndex !== trackIndex) {
+      if (geometricMatch !== null && (geometricMatch.trackIndex !== trackIndex || geometricMatch.staffIndex !== staffIndex)) {
         log(`[diag] DÉSACCORD piste : natif (beatMouseUp)=${trackIndex}, géométrique (position réelle du clic)=${geometricMatch.trackIndex} → on retient la valeur géométrique, plus fiable sur un silence vide.`);
         trackIndex = geometricMatch.trackIndex;
-        // La résolution géométrique (étape suivante) ne connaît pour l'instant qu'une seule portée
-        // par piste — sûr aujourd'hui puisque tracks[] n'a encore que des pistes à une portée.
-        staffIndex = 0;
+        staffIndex = geometricMatch.staffIndex;
         if (geometricMatch.beat) {
           effectiveBeat = geometricMatch.beat;
           log(`[diag] Battement local recalculé pour la bonne piste (findBeatAtPos a fonctionné) : nouvel index=${effectiveBeat.index}.`);
