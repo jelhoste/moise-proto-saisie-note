@@ -1457,22 +1457,31 @@
       if (match === null) return null;
       const { trackIndex, staffIndex } = match;
       // Une fois la BONNE piste/portée déterminée (axe Y, via le centre de portée), on retrouve le
-      // bon battement local sur l'axe X via les bornes de mesure-par-piste — fiables pour l'axe X,
-      // même si leur étendue en Y peut chevaucher la portée voisine.
-      // NOTE — incertitude non résolue par la doc : masterBar.bars[trackIndex] est décrit comme "une
-      // mesure d'une PISTE", jamais explicitement d'une portée. Pour nos 3 pistes actuelles (1 seule
-      // portée chacune), trackIndex suffit forcément. À valider empiriquement dès qu'une vraie piste
-      // à 2 portées (grand staff) existera dans tracks[].
+      // bon battement local sur l'axe X.
+      // CONFIRMÉ EN PRATIQUE (pas une supposition) : masterBar.bars[trackIndex] renvoie toujours le
+      // battement de la PREMIÈRE portée d'une piste multi-portées (grand staff), peu importe
+      // staffIndex — la doc dit juste "d'une piste", sans jamais préciser l'indexation exacte pour
+      // plusieurs portées, et ça a produit des "Battement d'index X introuvable" en test réel sur la
+      // portée grave. Plutôt que de deviner un autre index, on cherche parmi TOUTES les entrées de
+      // masterBar.bars celle dont le battement trouvé à cette position X appartient VRAIMENT à la
+      // piste et à la portée voulues (vérifié via l'identité du battement, pas sa position dans le
+      // tableau) — robuste quelle que soit l'indexation réelle de masterBar.bars.
       const lookup = api.boundsLookup;
       let matchedBeat = null;
       if (lookup && lookup.staffSystems) {
         for (const system of lookup.staffSystems) {
           const masterBar = (system.bars || []).find(mb => mb.index === measureIndex);
           if (!masterBar) continue;
-          const barBounds = masterBar.bars[trackIndex];
-          if (barBounds && typeof barBounds.findBeatAtPos === 'function') {
+          for (const barBounds of (masterBar.bars || [])) {
+            if (!barBounds || typeof barBounds.findBeatAtPos !== 'function') continue;
             const beatBounds = barBounds.findBeatAtPos(x);
-            matchedBeat = beatBounds ? beatBounds.beat : null;
+            const candidate = beatBounds ? beatBounds.beat : null;
+            if (candidate && candidate.voice && candidate.voice.bar && candidate.voice.bar.staff &&
+                candidate.voice.bar.staff.index === staffIndex &&
+                candidate.voice.bar.staff.track && candidate.voice.bar.staff.track.index === trackIndex) {
+              matchedBeat = candidate;
+              break;
+            }
           }
           break;
         }
