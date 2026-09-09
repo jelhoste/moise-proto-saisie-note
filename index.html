@@ -353,11 +353,20 @@
     // Piste de TEST, rendu seul, hors du tableau tracks[] (donc hors de toute interactivité — voir
     // le garde-fou !tracks[trackIndex]/!tracks[trackIndex].staves[staffIndex] dans beatMouseUp).
     // Percussion : ce n'est pas un type de \staff{...} — c'est \instrument percussion sur une piste
-    // normale ; les notes s'écrivent par nom d'articulation (\articulation defaults les enregistre),
-    // pas par hauteur ni corde+frette. L'exemple ci-dessous reprend quasi mot pour mot celui de la
-    // doc officielle. (Le grand staff, lui, est passé dans tracks[] — vraie piste interactive.)
+    // normale ; les notes s'écrivent par nom d'articulation. Plutôt que \articulation defaults (noms
+    // "standards" dont je n'ai vérifié que 4 avec certitude), on définit ici des noms à nous, associés
+    // à des NUMÉROS confirmés par la doc officielle (alphaTab.model.Note#percussionArticulation) —
+    // un exemplaire de chacun des sons les plus courants d'une batterie standard, pour voir leur
+    // rendu visuel avant de construire la saisie interactive. (Le grand staff, lui, est passé dans
+    // tracks[] — vraie piste interactive.)
     function buildExtraRenderTestTracksTex() {
-      return `\\track "Batterie (test rendu)" \\instrument percussion \\clef neutral \\articulation defaults \\ts 4 4 :4 (KickHit RideBell) r KickHit KickHit | :4 (KickHit RideBell) r KickHit KickHit`;
+      const articulations = [
+        ['Kick', 36], ['Snare', 38], ['HiHatClosed', 42], ['HiHatOpen', 46],
+        ['CrashHigh', 49], ['RideMiddle', 51], ['RideBell', 53], ['TomHigh', 48]
+      ];
+      const defs = articulations.map(([name, num]) => `\\articulation ${name} ${num}`).join(' ');
+      const notes = articulations.map(([name]) => name).join(' ');
+      return `\\track "Batterie (test rendu)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 :8 ${notes} | :1 r`;
     }
 
     const element = document.getElementById('alphaTab');
