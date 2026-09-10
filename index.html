@@ -59,6 +59,7 @@
 <div id="fretPickerOverlay"></div>
 <div id="fretPicker">
   <p id="fretPickerTitle"></p>
+  <div id="fretPickerVoiceRow" style="display:none; margin-bottom:8px;"></div>
   <div id="fretPickerDurations"></div>
   <div id="fretPickerGrid"></div>
   <button id="fretPickerDelete" style="display:none; background:#c0392b; color:#fff; border-color:#c0392b;">Supprimer cette note</button>
@@ -865,11 +866,13 @@
     // resaisie. Rétrécir est toujours possible (l'espace libéré se refusionne avec ce qui suit).
     // Agrandir n'est possible que si l'espace nécessaire est libre juste après ; sinon rejet
     // explicite — l'utilisateur doit d'abord libérer la note suivante (bouton Supprimer).
-    // Reconstruit le contenu d'une note (hauteur nommée OU corde+frette) selon ce que porte
-    // l'élément d'origine — évite de coder en dur `pitch` dans les fonctions qui touchent aux
-    // deux types de piste (comme changeSelectedNoteDuration ci-dessous).
+    // Reconstruit le contenu d'une note (hauteur nommée, corde+frette, OU nom d'articulation) selon
+    // ce que porte l'élément d'origine — évite de coder en dur `pitch` dans les fonctions qui
+    // touchent aux différents types de piste (comme changeSelectedNoteDuration ci-dessous).
     function noteContentOf(target) {
-      return target.string !== undefined ? { string: target.string, fret: target.fret } : { pitch: target.pitch };
+      if (target.string !== undefined) return { string: target.string, fret: target.fret };
+      if (target.articulation !== undefined) return { articulation: target.articulation };
+      return { pitch: target.pitch };
     }
 
     function changeSelectedNoteDuration(newDuration) {
@@ -1250,6 +1253,88 @@
       render();
     }
 
+    // Assignation automatique de voix pour la batterie — décidée ensemble : voix 1 (index 0, hampes
+    // vers le haut) = charleston/cymbales ; voix 2 (index 1, hampes vers le bas) = grosse
+    // caisse/caisse claire/toms. L'utilisateur garde la main via le popup si besoin (bouton de
+    // bascule manuelle).
+    const PERCUSSION_DEFAULT_VOICE = {
+      Kick: 1, Snare: 1, TomHigh: 1,
+      HiHatClosed: 0, HiHatOpen: 0, CrashHigh: 0, RideMiddle: 0, RideBell: 0
+    };
+
+    // Retrouve, dans une AUTRE voix de la même mesure, l'index de l'élément qui commence exactement
+    // à la même position rythmique — nécessaire car les deux voix gèrent leur propre découpage de
+    // silences indépendamment (le même index local ne pointe pas forcément le même instant).
+    function findLocalIndexAtStartPos(measure, targetStartPos) {
+      let pos = 0;
+      for (let i = 0; i < measure.length; i++) {
+        if (Math.abs(pos - targetStartPos) < EPS) return i;
+        pos += measure[i].beats;
+      }
+      return -1;
+    }
+
+    // Place une note de batterie : redirige automatiquement vers la voix par défaut du son choisi
+    // si elle diffère de la voix cliquée (recherche par position rythmique équivalente, pas par
+    // index). Volontairement simple pour ce spike : pas de débordement inter-mesure, pas de
+    // triolets — comme pour la tab au départ.
+    function placePercussionNoteAt(trackIndex, staffIndex, clickedVoiceIndex, measureIndex, clickedLocalIndex, duration, articulationName, forcedVoiceIndex) {
+      const staff = tracks[trackIndex].staves[staffIndex];
+      const clickedMeasure = staff.voices[clickedVoiceIndex].measures[measureIndex];
+      const clickedTarget = clickedMeasure[clickedLocalIndex];
+      const isEditing = clickedTarget && clickedTarget.type === 'note';
+
+      // En édition, la note reste dans SA voix d'origine — forcer une autre voix n'aurait pas de
+      // sens pour corriger une note déjà bien placée. L'assignation automatique (ou la bascule
+      // manuelle) ne s'applique qu'à un placement neuf sur un silence.
+      const targetVoiceIndex = isEditing
+        ? clickedVoiceIndex
+        : (forcedVoiceIndex !== null && forcedVoiceIndex !== undefined ? forcedVoiceIndex : (PERCUSSION_DEFAULT_VOICE[articulationName] ?? clickedVoiceIndex));
+
+      const clickedStartPos = startPositionOf(clickedMeasure, clickedLocalIndex);
+      let targetMeasure, targetLocalIndex;
+
+      if (targetVoiceIndex === clickedVoiceIndex) {
+        targetMeasure = clickedMeasure;
+        targetLocalIndex = clickedLocalIndex;
+      } else {
+        targetMeasure = staff.voices[targetVoiceIndex].measures[measureIndex];
+        targetLocalIndex = findLocalIndexAtStartPos(targetMeasure, clickedStartPos);
+        if (targetLocalIndex === -1) {
+          log(`REJET — impossible de placer ${articulationName} (voix ${targetVoiceIndex + 1} normalement) : aucune limite de silence à la position ${clickedStartPos} dans cette voix (une note y occupe déjà un intervalle qui ne commence pas exactement là).`);
+          return;
+        }
+        log(`[diag batterie] ${articulationName} placé en voix ${targetVoiceIndex + 1} (assignation automatique, clic parti de la voix ${clickedVoiceIndex + 1}).`);
+      }
+
+      const target = targetMeasure[targetLocalIndex];
+      if (!target || (target.type !== 'rest' && target.type !== 'note')) {
+        log(`REJET — position invalide dans la voix ${targetVoiceIndex + 1}.`);
+        return;
+      }
+
+      // Édition d'une note déjà posée : on la traite comme un silence de même durée pour le calcul
+      // de l'espace disponible (elle sera de toute façon remplacée) — permet d'agrandir/réduire.
+      let workingMeasure = targetMeasure;
+      if (target.type === 'note') {
+        workingMeasure = targetMeasure.slice();
+        workingMeasure[targetLocalIndex] = { type: 'rest', beats: target.beats };
+      }
+
+      const startPos = startPositionOf(workingMeasure, targetLocalIndex);
+      const { totalBeats: availableInMeasure, endIndexExclusive } = contiguousRestSpan(workingMeasure, targetLocalIndex);
+      if (duration > availableInMeasure + EPS) {
+        log(`REJET — durée ${duration} demandée mais seulement ${availableInMeasure} temps disponibles ici (voix ${targetVoiceIndex + 1}). Pas de débordement pour la batterie dans ce spike.`);
+        return;
+      }
+      const remaining = availableInMeasure - duration;
+      const restBreakdown = legalRestBreakdown(remaining, startPos + duration);
+      const newElements = [{ type: 'note', articulation: articulationName, beats: duration }, ...restBreakdown.map(b => ({ type: 'rest', beats: b }))];
+      targetMeasure.splice(targetLocalIndex, endIndexExclusive - targetLocalIndex, ...newElements);
+      log(`Note batterie placée (${tracks[trackIndex].name}, mesure ${measureIndex}, voix ${targetVoiceIndex + 1}) — ${articulationName}, ${duration} temps.`);
+      render();
+    }
+
     // Popup de saisie tab : 25 boutons (cases 0 à 24), avec ou sans sélecteur de durée selon le
     // contexte (masqué pour un élément de triolet, dont la durée est fixée par le groupe). Piloté
     // par callback (onConfirm) plutôt que d'appeler directement une fonction de placement, pour
@@ -1258,11 +1343,38 @@
     const DURATION_CHOICES = [[4, 'Ronde'], [2, 'Blanche'], [1, 'Noire'], [0.5, 'Croche'], [0.25, 'Double-croche']];
     let fretPickerDuration = 1;
 
-    function openFretPicker(opts) {
-      const { title, targetString, existingFret, showDurationPicker, initialDuration, clientX, clientY, onConfirm } = opts;
+    // Popup générique à choix multiples (piloté par callback) : la tab l'utilise avec des frettes
+    // (0-24), la batterie avec des noms de son — même mécanique de popup, juste des choix différents.
+    function openChoicePicker(opts) {
+      const { title, choices, existingValue, showDurationPicker, initialDuration, clientX, clientY, onConfirm, voiceChoice } = opts;
       fretPickerDuration = initialDuration;
 
       document.getElementById('fretPickerTitle').textContent = title;
+
+      // Rangée de bascule manuelle de voix (batterie uniquement) — affiche la voix par défaut déjà
+      // détectée automatiquement, avec la possibilité de la forcer sur l'autre le temps de ce choix.
+      const voiceRow = document.getElementById('fretPickerVoiceRow');
+      let chosenVoiceIndex = voiceChoice ? voiceChoice.current : null;
+      if (voiceChoice) {
+        voiceRow.style.display = 'flex';
+        voiceRow.style.gap = '4px';
+        voiceRow.innerHTML = '';
+        const labels = ['Voix 1 (aiguë)', 'Voix 2 (grave)'];
+        labels.forEach((label, idx) => {
+          const b = document.createElement('button');
+          b.className = 'durBtn' + (chosenVoiceIndex === idx ? ' active' : '');
+          b.textContent = label;
+          b.addEventListener('click', () => {
+            chosenVoiceIndex = idx;
+            voiceRow.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+          });
+          voiceRow.appendChild(b);
+        });
+      } else {
+        voiceRow.style.display = 'none';
+        voiceRow.innerHTML = '';
+      }
 
       const durWrap = document.getElementById('fretPickerDurations');
       durWrap.innerHTML = '';
@@ -1283,24 +1395,24 @@
 
       const grid = document.getElementById('fretPickerGrid');
       grid.innerHTML = '';
-      for (let fret = 0; fret <= 24; fret++) {
+      for (const choice of choices) {
         const b = document.createElement('button');
-        b.className = 'fretBtn' + (existingFret === fret ? ' current' : '');
-        b.textContent = String(fret);
+        b.className = 'fretBtn' + (choice.value === existingValue ? ' current' : '');
+        b.textContent = choice.label;
         b.addEventListener('click', () => {
-          onConfirm(fret, fretPickerDuration);
+          onConfirm(choice.value, fretPickerDuration, chosenVoiceIndex);
           if (showDurationPicker) syncDurationPaletteToBeats(fretPickerDuration);
           closeFretPicker();
         });
         grid.appendChild(b);
       }
 
-      // Bouton Supprimer : uniquement quand on édite une note déjà posée (existingFret non nul).
+      // Bouton Supprimer : uniquement quand on édite une note déjà posée (existingValue non nul).
       // Réutilise deleteSelectedNote() telle quelle — elle exige selectedNote, déjà renseigné par
       // beatMouseUp avant l'ouverture du popup sur une note existante ; gère nativement triolet
       // (silence de triolet, y compris le nettoyage automatique du groupe) et note normale.
       const deleteBtn = document.getElementById('fretPickerDelete');
-      if (existingFret !== null) {
+      if (existingValue !== null && existingValue !== undefined) {
         deleteBtn.style.display = 'block';
         deleteBtn.onclick = () => {
           deleteSelectedNote();
@@ -1318,6 +1430,17 @@
 
       fretPickerAnchor = { clientX, clientY };
       requestAnimationFrame(positionFretPicker);
+    }
+
+    // Fin wrapper pour la tab : 25 choix (frettes 0 à 24).
+    function openFretPicker(opts) {
+      const { title, targetString, existingFret, showDurationPicker, initialDuration, clientX, clientY, onConfirm } = opts;
+      const choices = [];
+      for (let fret = 0; fret <= 24; fret++) choices.push({ label: String(fret), value: fret });
+      openChoicePicker({
+        title, choices, existingValue: existingFret, showDurationPicker, initialDuration, clientX, clientY,
+        onConfirm: (fret, duration) => onConfirm(fret, duration)
+      });
     }
 
     // Seuil dédié téléphone (tablette reste en mode flottant comme le desktop) — décision prise
@@ -1637,12 +1760,40 @@
       }
 
       if (tracks[trackIndex].instrument === 'percussion') {
-        // La portée est bien dans tracks[] (rendu de base fonctionnel, deux voix en place), mais la
-        // saisie interactive (popup de sons + assignation automatique de voix) n'est pas encore
-        // câblée — étape suivante.
-        deselectNote('clic sur la portée de percussion, pas encore interactive');
-        deselectMeasure('clic sur la portée de percussion, pas encore interactive');
-        log('Piste de percussion — saisie interactive pas encore câblée (rendu de base uniquement pour l\'instant). Clic ignoré.');
+        const staff = tracks[trackIndex].staves[staffIndex];
+        const measures = staff.voices[voiceIndex].measures;
+        const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
+        const clickedPos = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index };
+        if (!isSameSelection(selectedNote, clickedPos)) {
+          deselectNote('clic sur une cible différente de la sélection actuelle');
+        }
+        deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
+
+        if (clickedTarget && clickedTarget.type === 'note') {
+          selectedNote = clickedPos;
+          showSelectionHighlight(effectiveBeat);
+        }
+
+        const existingArticulation = clickedTarget && clickedTarget.type === 'note' ? clickedTarget.articulation : null;
+        const soundChoices = (staff.articulations || []).map(([name]) => ({ label: name, value: name }));
+
+        log(`[diag batterie] clic sur voix=${voiceIndex + 1}, cible=${clickedTarget ? clickedTarget.type : '???'}${existingArticulation ? ' (' + existingArticulation + ')' : ''}.`);
+
+        openChoicePicker({
+          title: existingArticulation ? `Modifier le son (voix ${voiceIndex + 1})` : `Nouveau son (clic voix ${voiceIndex + 1})`,
+          choices: soundChoices,
+          existingValue: existingArticulation,
+          showDurationPicker: true,
+          initialDuration: clickedTarget && clickedTarget.type === 'note' ? clickedTarget.beats : selectedDuration,
+          clientX: lastPointerClientX,
+          clientY: lastPointerClientY,
+          // Bascule de voix manuelle : seulement pour un NOUVEAU placement (l'édition reste toujours
+          // dans la voix d'origine — forcer une voix différente n'aurait pas de sens là). Aucune
+          // voix pré-surlignée : elle dépend du son qui va être choisi, donc inconnue avant coup ;
+          // l'utilisateur peut forcer l'une des deux avant de choisir le son, sinon reste automatique.
+          voiceChoice: existingArticulation ? null : { current: null },
+          onConfirm: (articulationName, duration, forcedVoice) => placePercussionNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, duration, articulationName, forcedVoice)
+        });
         return;
       }
 
