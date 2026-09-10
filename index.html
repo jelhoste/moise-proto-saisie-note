@@ -203,7 +203,20 @@
         { name: 'Piano Grand Staff', instrument: 'acousticgrandpiano', staves: [
           { staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }] },
           { staffType: 'score', tuning: 'piano', clef: 'F4', voices: [{ measures: freshMeasures() }] }
-        ] }
+        ] },
+        // Batterie : une seule portée, mais DEUX voix (pas deux portées) — voix 1 = cymbales/charley
+        // (hampes vers le haut), voix 2 = grosse caisse/caisse claire/toms (hampes vers le bas),
+        // assignation automatique à la saisie. Rendu seul pour l'instant, pas encore interactive —
+        // sélection des sons les plus courants, numéros confirmés par la doc officielle
+        // (alphaTab.model.Note#percussionArticulation).
+        { name: 'Batterie', instrument: 'percussion', staves: [{
+          staffType: 'score', tuning: null, clef: 'neutral',
+          articulations: [
+            ['Kick', 36], ['Snare', 38], ['HiHatClosed', 42], ['HiHatOpen', 46],
+            ['CrashHigh', 49], ['RideMiddle', 51], ['RideBell', 53], ['TomHigh', 48]
+          ],
+          voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }]
+        }] }
       ];
     }
     let tracks = makeDefaultTracks();
@@ -317,6 +330,9 @@
           } else if (el.string !== undefined) {
             // Note de tablature : notation fret.string (doc alphaTab, document-structure#fretted-notes).
             tokens.push(`${el.fret}.${el.string}`);
+          } else if (el.articulation !== undefined) {
+            // Note de percussion : nom d'articulation défini via \articulation (voir buildTex).
+            tokens.push(el.articulation);
           } else {
             tokens.push(el.pitch);
           }
@@ -340,12 +356,18 @@
         // sur la première portée, jamais répété sur les portées suivantes (cf. exemple grand staff
         // officiel : seule la 1ère portée a \instrument, la 2e n'a que \tuning + \clef).
         const staffBlocks = t.staves.map((s, i) => {
-          // Pour l'instant, une seule voix par portée est générée dans le tex (voices[0] explicite)
-          // — la génération \voice pour plusieurs voix viendra avec la vraie saisie multi-voix.
-          const bars = buildTrackBars(s.voices[0].measures);
+          // Une voix par défaut, ou plusieurs (\voice) si la portée en a — la 1ère voix s'écrit
+          // normalement après \ts, chaque voix suivante est précédée de \voice (doc alphaTex).
+          const voiceBlocks = s.voices.map((v, vi) => {
+            const bars = buildTrackBars(v.measures);
+            return vi === 0 ? bars : `\\voice ${bars}`;
+          });
           const instrumentToken = i === 0 ? ` \\instrument ${t.instrument}` : '';
           const clefToken = s.clef ? ` \\clef ${s.clef}` : '';
-          return `\\staff{${s.staffType}} \\tuning ${buildTuningToken(s)}${instrumentToken}${clefToken} \\ts 4 4 ${bars}`;
+          // \tuning absent pour une portée sans hauteur (percussion) — pas de mot-clé pertinent.
+          const tuningToken = s.tuning ? ` \\tuning ${buildTuningToken(s)}` : '';
+          const articulationTokens = (s.articulations || []).map(([name, num]) => ` \\articulation ${name} ${num}`).join('');
+          return `\\staff{${s.staffType}}${tuningToken}${instrumentToken}${clefToken}${articulationTokens} \\ts 4 4 ${voiceBlocks.join(' ')}`;
         });
         return `\\track "${t.name}" ${staffBlocks.join(' ')}`;
       });
@@ -1611,6 +1633,16 @@
         deselectNote('clic sur une piste de test, rendu seul (non interactive)');
         deselectMeasure('clic sur une piste de test, rendu seul (non interactive)');
         log(`Piste ${trackIndex} / portée ${staffIndex} / voix ${voiceIndex} hors de notre modèle interactif (piste de test, rendu seul) — clic ignoré.`);
+        return;
+      }
+
+      if (tracks[trackIndex].instrument === 'percussion') {
+        // La portée est bien dans tracks[] (rendu de base fonctionnel, deux voix en place), mais la
+        // saisie interactive (popup de sons + assignation automatique de voix) n'est pas encore
+        // câblée — étape suivante.
+        deselectNote('clic sur la portée de percussion, pas encore interactive');
+        deselectMeasure('clic sur la portée de percussion, pas encore interactive');
+        log('Piste de percussion — saisie interactive pas encore câblée (rendu de base uniquement pour l\'instant). Clic ignoré.');
         return;
       }
 
