@@ -27,6 +27,8 @@
   .paletteLabel { font-size: 13px; color: #555; margin-right: 4px; }
   .durBtn, .modBtn { margin: 0 4px 0 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
   .durBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  .percSoundBtn, .percVoiceBtn { margin: 0 4px 4px 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
+  .percSoundBtn.active, .percVoiceBtn.active { background: #b0562b; color: #fff; border-color: #b0562b; }
 
   /* Popup de saisie tablature (corde+frette) : ancré près du clic sur grand écran (position:fixed,
      left/top calculés en JS), converti en modale plein-largeur remontant du bas sur petit écran
@@ -59,7 +61,6 @@
 <div id="fretPickerOverlay"></div>
 <div id="fretPicker">
   <p id="fretPickerTitle"></p>
-  <div id="fretPickerVoiceRow" style="display:none; margin-bottom:8px;"></div>
   <div id="fretPickerDurations"></div>
   <div id="fretPickerGrid"></div>
   <button id="fretPickerDelete" style="display:none; background:#c0392b; color:#fff; border-color:#c0392b;">Supprimer cette note</button>
@@ -85,6 +86,21 @@
     <button class="durBtn" data-beats="0.5">Croche</button>
     <button class="durBtn" data-beats="0.25">Double-croche</button>
     <label style="margin-left:10px; font-size:13px;"><input type="checkbox" id="tripletToggle"> Triolet (place un groupe de 3)</label>
+  </div>
+  <div id="percussionPalette" style="margin-top:10px;">
+    <span class="paletteLabel">Son (batterie) : </span>
+    <button class="percSoundBtn active" data-sound="Kick">Kick</button>
+    <button class="percSoundBtn" data-sound="Snare">Snare</button>
+    <button class="percSoundBtn" data-sound="HiHatClosed">HiHat fermé</button>
+    <button class="percSoundBtn" data-sound="HiHatOpen">HiHat ouvert</button>
+    <button class="percSoundBtn" data-sound="CrashHigh">Crash</button>
+    <button class="percSoundBtn" data-sound="RideMiddle">Ride</button>
+    <button class="percSoundBtn" data-sound="RideBell">Ride (cloche)</button>
+    <button class="percSoundBtn" data-sound="TomHigh">Tom</button>
+    <span class="paletteLabel" style="margin-left:10px;">Voix : </span>
+    <button class="percVoiceBtn active" data-voice="auto">Auto</button>
+    <button class="percVoiceBtn" data-voice="0">1 (aiguë)</button>
+    <button class="percVoiceBtn" data-voice="1">2 (grave)</button>
   </div>
   <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
@@ -1346,35 +1362,10 @@
     // Popup générique à choix multiples (piloté par callback) : la tab l'utilise avec des frettes
     // (0-24), la batterie avec des noms de son — même mécanique de popup, juste des choix différents.
     function openChoicePicker(opts) {
-      const { title, choices, existingValue, showDurationPicker, initialDuration, clientX, clientY, onConfirm, voiceChoice } = opts;
+      const { title, choices, existingValue, showDurationPicker, initialDuration, clientX, clientY, onConfirm } = opts;
       fretPickerDuration = initialDuration;
 
       document.getElementById('fretPickerTitle').textContent = title;
-
-      // Rangée de bascule manuelle de voix (batterie uniquement) — affiche la voix par défaut déjà
-      // détectée automatiquement, avec la possibilité de la forcer sur l'autre le temps de ce choix.
-      const voiceRow = document.getElementById('fretPickerVoiceRow');
-      let chosenVoiceIndex = voiceChoice ? voiceChoice.current : null;
-      if (voiceChoice) {
-        voiceRow.style.display = 'flex';
-        voiceRow.style.gap = '4px';
-        voiceRow.innerHTML = '';
-        const labels = ['Voix 1 (aiguë)', 'Voix 2 (grave)'];
-        labels.forEach((label, idx) => {
-          const b = document.createElement('button');
-          b.className = 'durBtn' + (chosenVoiceIndex === idx ? ' active' : '');
-          b.textContent = label;
-          b.addEventListener('click', () => {
-            chosenVoiceIndex = idx;
-            voiceRow.querySelectorAll('button').forEach(x => x.classList.remove('active'));
-            b.classList.add('active');
-          });
-          voiceRow.appendChild(b);
-        });
-      } else {
-        voiceRow.style.display = 'none';
-        voiceRow.innerHTML = '';
-      }
 
       const durWrap = document.getElementById('fretPickerDurations');
       durWrap.innerHTML = '';
@@ -1400,7 +1391,7 @@
         b.className = 'fretBtn' + (choice.value === existingValue ? ' current' : '');
         b.textContent = choice.label;
         b.addEventListener('click', () => {
-          onConfirm(choice.value, fretPickerDuration, chosenVoiceIndex);
+          onConfirm(choice.value, fretPickerDuration);
           if (showDurationPicker) syncDurationPaletteToBeats(fretPickerDuration);
           closeFretPicker();
         });
@@ -1772,28 +1763,14 @@
         if (clickedTarget && clickedTarget.type === 'note') {
           selectedNote = clickedPos;
           showSelectionHighlight(effectiveBeat);
+          log(`Note batterie sélectionnée : ${tracks[trackIndex].name}, mesure ${measureIndex}, voix ${voiceIndex + 1} (${clickedTarget.articulation}, ${clickedTarget.beats} temps). Utilise la palette Son/Durée pour la modifier, ou "Supprimer la note sélectionnée".`);
+          return;
         }
 
-        const existingArticulation = clickedTarget && clickedTarget.type === 'note' ? clickedTarget.articulation : null;
-        const soundChoices = (staff.articulations || []).map(([name]) => ({ label: name, value: name }));
-
-        log(`[diag batterie] clic sur voix=${voiceIndex + 1}, cible=${clickedTarget ? clickedTarget.type : '???'}${existingArticulation ? ' (' + existingArticulation + ')' : ''}.`);
-
-        openChoicePicker({
-          title: existingArticulation ? `Modifier le son (voix ${voiceIndex + 1})` : `Nouveau son (clic voix ${voiceIndex + 1})`,
-          choices: soundChoices,
-          existingValue: existingArticulation,
-          showDurationPicker: true,
-          initialDuration: clickedTarget && clickedTarget.type === 'note' ? clickedTarget.beats : selectedDuration,
-          clientX: lastPointerClientX,
-          clientY: lastPointerClientY,
-          // Bascule de voix manuelle : seulement pour un NOUVEAU placement (l'édition reste toujours
-          // dans la voix d'origine — forcer une voix différente n'aurait pas de sens là). Aucune
-          // voix pré-surlignée : elle dépend du son qui va être choisi, donc inconnue avant coup ;
-          // l'utilisateur peut forcer l'une des deux avant de choisir le son, sinon reste automatique.
-          voiceChoice: existingArticulation ? null : { current: null },
-          onConfirm: (articulationName, duration, forcedVoice) => placePercussionNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, duration, articulationName, forcedVoice)
-        });
+        // Silence : placement direct avec le son/durée/voix déjà choisis dans la palette persistante
+        // — plus de popup, même logique qu'une portée classique.
+        pendingScrollCompensation = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index, targetX: lastPointerX, targetY: lastPointerY };
+        placePercussionNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, selectedDuration, selectedPercussionSound, selectedPercussionVoiceForce);
         return;
       }
 
@@ -1953,6 +1930,45 @@
         }
       });
     });
+
+    let selectedPercussionSound = 'Kick';
+    document.querySelectorAll('.percSoundBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedPercussionSound = btn.dataset.sound;
+        document.querySelectorAll('.percSoundBtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        log(`Son de batterie sélectionné : ${selectedPercussionSound}.`);
+        if (selectedNote) {
+          changeSelectedNoteArticulation(selectedPercussionSound);
+        }
+      });
+    });
+
+    // 'auto' = laisser l'assignation automatique décider (par défaut) ; sinon force la voix choisie
+    // pour tout NOUVEAU placement (sans effet sur l'édition d'une note déjà posée, qui reste
+    // toujours dans sa voix d'origine).
+    let selectedPercussionVoiceForce = null;
+    document.querySelectorAll('.percVoiceBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const v = btn.dataset.voice;
+        selectedPercussionVoiceForce = v === 'auto' ? null : parseInt(v, 10);
+        document.querySelectorAll('.percVoiceBtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        log(`Voix de batterie : ${v === 'auto' ? 'automatique' : 'voix ' + (selectedPercussionVoiceForce + 1) + ' forcée'}.`);
+      });
+    });
+
+    // Change le son d'une note de percussion déjà sélectionnée (reste dans sa voix d'origine —
+    // même logique que placePercussionNoteAt en mode édition).
+    function changeSelectedNoteArticulation(newArticulation) {
+      if (!selectedNote) return;
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex } = selectedNote;
+      const track = tracks[trackIndex];
+      if (!track || track.instrument !== 'percussion') return;
+      const target = track.staves[staffIndex].voices[voiceIndex].measures[measureIndex][localIndex];
+      if (!target || target.type !== 'note') return;
+      placePercussionNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, target.beats, newArticulation, voiceIndex);
+    }
 
     document.getElementById('testTexBtn').addEventListener('click', () => {
       const customTex = document.getElementById('texInput').value;
