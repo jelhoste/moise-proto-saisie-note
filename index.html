@@ -29,6 +29,8 @@
   .durBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
   .percSoundBtn, .percVoiceBtn { margin: 0 4px 4px 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
   .percSoundBtn.active, .percVoiceBtn.active { background: #b0562b; color: #fff; border-color: #b0562b; }
+  .scoreVoiceBtn { margin: 0 4px 0 0; padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #f8f8f8; cursor: pointer; }
+  .scoreVoiceBtn.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
 
   /* Popup de saisie tablature (corde+frette) : ancré près du clic sur grand écran (position:fixed,
      left/top calculés en JS), converti en modale plein-largeur remontant du bas sur petit écran
@@ -104,8 +106,8 @@
   </div>
   <div id="scoreVoicePalette" style="margin-top:10px;">
     <span class="paletteLabel">Voix (portée classique) : </span>
-    <button class="durBtn scoreVoiceBtn active" data-voice="0">Voix 1</button>
-    <button class="durBtn scoreVoiceBtn" data-voice="1">Voix 2</button>
+    <button class="scoreVoiceBtn active" data-voice="0">Voix 1</button>
+    <button class="scoreVoiceBtn" data-voice="1">Voix 2</button>
   </div>
   <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
