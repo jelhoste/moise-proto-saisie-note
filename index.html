@@ -102,6 +102,11 @@
     <button class="percVoiceBtn" data-voice="0">1 (aiguë)</button>
     <button class="percVoiceBtn" data-voice="1">2 (grave)</button>
   </div>
+  <div id="scoreVoicePalette" style="margin-top:10px;">
+    <span class="paletteLabel">Voix (portée classique) : </span>
+    <button class="durBtn scoreVoiceBtn active" data-voice="0">Voix 1</button>
+    <button class="durBtn scoreVoiceBtn" data-voice="1">Voix 2</button>
+  </div>
   <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
   <button id="deleteTupletBtn">Supprimer le triolet entier</button>
@@ -208,8 +213,8 @@
     }
     function makeDefaultTracks() {
       return [
-        { name: 'Piano 1', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }] }] },
-        { name: 'Piano 2', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }] }] },
+        { name: 'Piano 1', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] }] },
+        { name: 'Piano 2', instrument: 'acousticgrandpiano', staves: [{ staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] }] },
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
@@ -218,8 +223,8 @@
         // multi-portées interactive, ce qui teste réellement l'infrastructure staffIndex des
         // étapes 1-3.
         { name: 'Piano Grand Staff', instrument: 'acousticgrandpiano', staves: [
-          { staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }] },
-          { staffType: 'score', tuning: 'piano', clef: 'F4', voices: [{ measures: freshMeasures() }] }
+          { staffType: 'score', tuning: 'piano', clef: null, voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] },
+          { staffType: 'score', tuning: 'piano', clef: 'F4', voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] }
         ] },
         // Batterie : une seule portée, mais DEUX voix (pas deux portées) — voix 1 = cymbales/charley
         // (hampes vers le haut), voix 2 = grosse caisse/caisse claire/toms (hampes vers le bas),
@@ -1860,14 +1865,45 @@
       }
       deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
 
-      pendingScrollCompensation = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index, targetX: lastPointerX, targetY: lastPointerY };
+      // Un clic sur un SILENCE est un placement neuf : on vise la voix choisie dans la palette
+      // persistante, pas forcément celle que le clic a résolue (souci connu d'alphaTab — GH #2572 —
+      // les silences de deux voix qui coïncident ne sont pas toujours indépendamment cliquables).
+      // On retrouve la position équivalente par le RYTHME (comme pour la batterie), pas par index.
+      // Un clic sur une note déjà posée reste toujours une ÉDITION dans SA voix d'origine, jamais
+      // redirigée.
+      let targetVoiceIndex = voiceIndex;
+      let targetLocalIndex = effectiveBeat.index;
+      let targetTarget = clickedTarget;
+      if (clickedTarget && clickedTarget.type === 'rest') {
+        const staffForVoices = tracks[trackIndex].staves[staffIndex];
+        const desiredVoiceIndex = selectedScoreVoiceIndex;
+        if (desiredVoiceIndex !== voiceIndex) {
+          if (desiredVoiceIndex >= staffForVoices.voices.length) {
+            log(`Voix ${desiredVoiceIndex + 1} inexistante sur cette portée (une seule voix ici) — reste en voix ${voiceIndex + 1}.`);
+          } else {
+            const clickedStartPos = startPositionOf(measures[measureIndex], effectiveBeat.index);
+            const targetMeasure = staffForVoices.voices[desiredVoiceIndex].measures[measureIndex];
+            const redirectedLocalIndex = findLocalIndexAtStartPos(targetMeasure, clickedStartPos);
+            if (redirectedLocalIndex === -1) {
+              log(`REJET — impossible de placer en voix ${desiredVoiceIndex + 1} : aucune limite de silence à la position ${clickedStartPos} dans cette voix (une note y occupe déjà un intervalle qui ne commence pas exactement là).`);
+              return;
+            }
+            targetVoiceIndex = desiredVoiceIndex;
+            targetLocalIndex = redirectedLocalIndex;
+            targetTarget = targetMeasure[redirectedLocalIndex];
+            log(`[diag] Placement redirigé vers la voix ${desiredVoiceIndex + 1} (clic parti de la voix ${voiceIndex + 1}).`);
+          }
+        }
+      }
 
-      if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
-        fillTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, pitch);
-      } else if (tripletActive && clickedTarget && clickedTarget.type === 'rest') {
-        placeTripletGroupAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch);
+      pendingScrollCompensation = { trackIndex, staffIndex, voiceIndex: targetVoiceIndex, measureIndex, localIndex: targetLocalIndex, targetX: lastPointerX, targetY: lastPointerY };
+
+      if (targetTarget && targetTarget.type === 'rest' && targetTarget.tupletGroup) {
+        fillTripletSlot(trackIndex, staffIndex, targetVoiceIndex, measureIndex, targetLocalIndex, pitch);
+      } else if (tripletActive && targetTarget && targetTarget.type === 'rest') {
+        placeTripletGroupAt(trackIndex, staffIndex, targetVoiceIndex, measureIndex, targetLocalIndex, selectedDuration, pitch);
       } else {
-        placeNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch, effectiveBeat);
+        placeNoteAt(trackIndex, staffIndex, targetVoiceIndex, measureIndex, targetLocalIndex, selectedDuration, pitch, effectiveBeat);
       }
     });
 
@@ -1969,6 +2005,19 @@
       if (!target || target.type !== 'note') return;
       placePercussionNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, target.beats, newArticulation, voiceIndex);
     }
+
+    // Voix ciblée pour un NOUVEAU placement sur une portée classique (piano/grand staff) — choix
+    // explicite obligatoire (pas d'auto possible : n'importe quelle hauteur peut aller dans l'une
+    // ou l'autre voix, ça dépend de ce que l'utilisateur écrit, pas du contenu lui-même).
+    let selectedScoreVoiceIndex = 0;
+    document.querySelectorAll('.scoreVoiceBtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedScoreVoiceIndex = parseInt(btn.dataset.voice, 10);
+        document.querySelectorAll('.scoreVoiceBtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        log(`Voix (portée classique) sélectionnée : voix ${selectedScoreVoiceIndex + 1}.`);
+      });
+    });
 
     document.getElementById('testTexBtn').addEventListener('click', () => {
       const customTex = document.getElementById('texInput').value;
