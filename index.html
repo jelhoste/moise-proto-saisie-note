@@ -237,8 +237,8 @@
     // Une note liée fait partie d'une chaîne (potentiellement à cheval sur plusieurs mesures, mais
     // toujours au sein de LA MÊME piste) : on retrouve toute la chaîne pour propager un changement
     // de hauteur partout, pas seulement sur le fragment cliqué.
-    function getTieChainPositions(trackIndex, staffIndex, measureIndex, localIndex) {
-      const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+    function getTieChainPositions(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex) {
+      const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
       let mi = measureIndex, li = localIndex;
       while (measures[mi][li] && measures[mi][li].tied) {
         li--;
@@ -263,8 +263,8 @@
         log('Aucune note sélectionnée — clique sur une note avant d\'utiliser les boutons de hauteur.');
         return;
       }
-      const { trackIndex, staffIndex, measureIndex, localIndex } = selectedNote;
-      const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex } = selectedNote;
+      const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
       const el = measures[measureIndex] && measures[measureIndex][localIndex];
       if (!el || el.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
@@ -275,7 +275,7 @@
         return;
       }
 
-      const chain = getTieChainPositions(trackIndex, staffIndex, measureIndex, localIndex);
+      const chain = getTieChainPositions(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex);
       const origin = measures[chain[0].measureIndex][chain[0].localIndex];
       const oldPitch = origin.pitch;
       const newPitch = semitoneToPitch(pitchToSemitone(oldPitch) + deltaSemitones);
@@ -340,6 +340,8 @@
         // sur la première portée, jamais répété sur les portées suivantes (cf. exemple grand staff
         // officiel : seule la 1ère portée a \instrument, la 2e n'a que \tuning + \clef).
         const staffBlocks = t.staves.map((s, i) => {
+          // Pour l'instant, une seule voix par portée est générée dans le tex (voices[0] explicite)
+          // — la génération \voice pour plusieurs voix viendra avec la vraie saisie multi-voix.
           const bars = buildTrackBars(s.voices[0].measures);
           const instrumentToken = i === 0 ? ` \\instrument ${t.instrument}` : '';
           const clefToken = s.clef ? ` \\clef ${s.clef}` : '';
@@ -562,7 +564,7 @@
     // Règle de désélection : toute cible différente de la note actuellement sélectionnée
     // (silence, vide, zone numéro, poignée de mesure, autre note...) désélectionne d'abord.
     function isSameSelection(a, b) {
-      return !!a && !!b && a.trackIndex === b.trackIndex && a.staffIndex === b.staffIndex && a.measureIndex === b.measureIndex && a.localIndex === b.localIndex;
+      return !!a && !!b && a.trackIndex === b.trackIndex && a.staffIndex === b.staffIndex && a.voiceIndex === b.voiceIndex && a.measureIndex === b.measureIndex && a.localIndex === b.localIndex;
     }
 
     function deselectNote(reason) {
@@ -600,12 +602,12 @@
 
     function applyPendingScrollCompensation() {
       if (!pendingScrollCompensation) return;
-      const { trackIndex, staffIndex, measureIndex, localIndex, targetX, targetY } = pendingScrollCompensation;
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, targetX, targetY } = pendingScrollCompensation;
       pendingScrollCompensation = null;
       try {
         const track = api.score.tracks[trackIndex];
         const bar = track.staves[staffIndex].bars[measureIndex];
-        const beat = bar.voices[0].beats[localIndex];
+        const beat = bar.voices[voiceIndex].beats[localIndex];
         const bounds = beat && api.boundsLookup && api.boundsLookup.findBeat ? api.boundsLookup.findBeat(beat) : null;
         if (!bounds) {
           log('[diag] Compensation de scroll : bounds introuvables pour la note visée après le nouveau rendu — scroll inchangé.');
@@ -676,13 +678,16 @@
     function measureBoundaryHasTie(boundaryIndex) {
       // boundaryIndex = position où une nouvelle mesure serait insérée, entre l'ancienne mesure
       // (boundaryIndex - 1) et l'ancienne mesure (boundaryIndex). Pas de frontière avant la
-      // première mesure ni après la dernière. On vérifie TOUTES les portées de TOUTES les pistes
-      // (un grand staff a deux portées indépendantes à protéger, pas juste une par piste).
+      // première mesure ni après la dernière. On vérifie TOUTES les voix de TOUTES les portées de
+      // TOUTES les pistes (un grand staff a deux portées indépendantes à protéger, pas juste une
+      // par piste ; pareil pour plusieurs voix sur une même portée).
       if (boundaryIndex <= 0 || boundaryIndex >= tracks[0].staves[0].voices[0].measures.length) return false;
       for (const t of tracks) {
         for (const s of t.staves) {
-          const next = s.voices[0].measures[boundaryIndex];
-          if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+          for (const v of s.voices) {
+            const next = v.measures[boundaryIndex];
+            if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+          }
         }
       }
       return false;
@@ -691,22 +696,25 @@
     function measureParticipatesInTie(index) {
       // true si la mesure `index` reçoit une liaison de la mesure précédente, ou en envoie une
       // vers la mesure suivante — dans les deux cas, la supprimer couperait la chaîne. Toutes les
-      // portées de toutes les pistes, même raison qu'au-dessus.
+      // voix de toutes les portées de toutes les pistes, même raison qu'au-dessus.
       for (const t of tracks) {
         for (const s of t.staves) {
-          const m = s.voices[0].measures[index];
-          if (!m) continue;
-          if (m[0] && m[0].type === 'note' && m[0].tied) return true;
-          const next = s.voices[0].measures[index + 1];
-          if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+          for (const v of s.voices) {
+            const m = v.measures[index];
+            if (!m) continue;
+            if (m[0] && m[0].type === 'note' && m[0].tied) return true;
+            const next = v.measures[index + 1];
+            if (next && next[0] && next[0].type === 'note' && next[0].tied) return true;
+          }
         }
       }
       return false;
     }
 
-    // Ajoute une mesure (silence complet) à TOUTES les portées de TOUTES les pistes en même temps
-    // — la structure de mesures est partagée, on ne peut jamais en désynchroniser une (y compris
-    // entre les deux portées d'un même grand staff).
+    // Ajoute une mesure (silence complet) à TOUTES les voix de TOUTES les portées de TOUTES les
+    // pistes en même temps — la structure de mesures est partagée, on ne peut jamais en
+    // désynchroniser une (y compris entre les deux portées d'un même grand staff, ou entre
+    // plusieurs voix d'une même portée).
     function insertMeasureAt(index) {
       if (measureBoundaryHasTie(index)) {
         log(`REJET — impossible d'insérer une mesure en position ${index} : une note liée traverse cette frontière (entre les mesures ${index - 1} et ${index}). Modifie ou supprime d'abord cette liaison.`);
@@ -714,7 +722,9 @@
       }
       for (const t of tracks) {
         for (const s of t.staves) {
-          s.voices[0].measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
+          for (const v of s.voices) {
+            v.measures.splice(index, 0, [{ type: 'rest', beats: 4 }]);
+          }
         }
       }
       log(`Mesure ajoutée en position ${index} (sur les ${tracks.length} pistes).`);
@@ -737,7 +747,9 @@
       }
       for (const t of tracks) {
         for (const s of t.staves) {
-          s.voices[0].measures.splice(index, 1);
+          for (const v of s.voices) {
+            v.measures.splice(index, 1);
+          }
         }
       }
       log(`Mesure ${index} supprimée (sur les ${tracks.length} pistes).`);
@@ -752,8 +764,8 @@
     // Fusionne un groupe de triolet (positions [start, end) d'une mesure) en silence(s) normal/aux,
     // en refusionnant avec les silences voisins — logique partagée entre la suppression manuelle du
     // triolet entier et le nettoyage automatique quand sa dernière note est supprimée.
-    function collapseTupletGroupToPlainRests(trackIndex, staffIndex, measureIndex, start, end, reason) {
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function collapseTupletGroupToPlainRests(trackIndex, staffIndex, voiceIndex, measureIndex, start, end, reason) {
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const groupBeats = m.slice(start, end).reduce((s, e) => s + e.beats, 0);
       m.splice(start, end - start, { type: 'rest', beats: groupBeats });
 
@@ -775,8 +787,8 @@
         log('Aucune note sélectionnée à supprimer.');
         return;
       }
-      const { trackIndex, staffIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide (état déjà modifié depuis) — suppression annulée.');
@@ -803,7 +815,7 @@
           log(`Note de triolet supprimée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → redevient un silence de triolet à remplir.`);
           render();
         } else {
-          collapseTupletGroupToPlainRests(trackIndex, staffIndex, measureIndex, start, end, 'dernière note du triolet supprimée — nettoyage automatique du groupe');
+          collapseTupletGroupToPlainRests(trackIndex, staffIndex, voiceIndex, measureIndex, start, end, 'dernière note du triolet supprimée — nettoyage automatique du groupe');
           render();
         }
         return;
@@ -843,8 +855,8 @@
         log('Aucune note sélectionnée — sélectionne une note avant de changer sa durée.');
         return;
       }
-      const { trackIndex, staffIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'note') {
         log('La sélection ne pointe plus vers une note valide.');
@@ -872,7 +884,7 @@
         const newElements = [{ type: 'note', ...noteContentOf(target), beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
         m.splice(localIndex, end - localIndex, ...newElements);
         log(`Durée réduite (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, espace libéré refusionné : [${breakdown.join(', ')}]`);
-        selectedNote = { trackIndex, staffIndex, measureIndex, localIndex };
+        selectedNote = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex };
         render();
         return;
       }
@@ -889,7 +901,7 @@
       const newElements = [{ type: 'note', ...noteContentOf(target), beats: newDuration }, ...breakdown.map(b => ({ type: 'rest', beats: b }))];
       m.splice(localIndex, endIndexExclusive - localIndex, ...newElements);
       log(`Durée agrandie (${tracks[trackIndex].name}, mesure ${measureIndex}) : ${target.beats} → ${newDuration} temps, silences restants : [${breakdown.join(', ')}]`);
-      selectedNote = { trackIndex, staffIndex, measureIndex, localIndex };
+      selectedNote = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex };
       render();
     }
 
@@ -898,8 +910,8 @@
         log('Aucune note sélectionnée — sélectionne une note du triolet à supprimer.');
         return;
       }
-      const { trackIndex, staffIndex, measureIndex, localIndex } = selectedNote;
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+      const { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex } = selectedNote;
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || !target.tupletGroup) {
         log('La note sélectionnée ne fait pas partie d\'un triolet.');
@@ -912,14 +924,14 @@
       let end = localIndex + 1;
       while (end < m.length && m[end] && m[end].tupletId === tid) end++;
 
-      collapseTupletGroupToPlainRests(trackIndex, staffIndex, measureIndex, start, end, 'suppression manuelle du groupe entier');
+      collapseTupletGroupToPlainRests(trackIndex, staffIndex, voiceIndex, measureIndex, start, end, 'suppression manuelle du groupe entier');
       selectedNote = null;
       hideSelectionHighlight();
       render();
     }
 
-    function placeTripletGroupAt(trackIndex, staffIndex, measureIndex, localIndex, baseDuration, pitch) {
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function placeTripletGroupAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, baseDuration, pitch) {
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'rest') {
         log('Un triolet ne peut être placé que sur un silence dans ce spike.');
@@ -950,8 +962,8 @@
       render();
     }
 
-    function fillTripletSlot(trackIndex, staffIndex, measureIndex, localIndex, pitch) {
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function fillTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, pitch) {
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       m[localIndex] = { type: 'note', pitch, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
       log(`Silence de triolet rempli (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → note ${pitch}.`);
@@ -998,8 +1010,8 @@
       }
     }
 
-    function placeNoteAt(trackIndex, staffIndex, measureIndex, localIndex, duration, pitch, nativeBeat) {
-      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function placeNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, duration, pitch, nativeBeat) {
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       if (!currentMeasure) {
         log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
@@ -1014,7 +1026,7 @@
           log(`Clic sur une note liée (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) — suppression d'une note liée non gérée dans ce spike.`);
           return;
         }
-        selectedNote = { trackIndex, staffIndex, measureIndex, localIndex };
+        selectedNote = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex };
         if (nativeBeat) showSelectionHighlight(nativeBeat);
         syncDurationPaletteToBeats(target.beats);
         log(`Note sélectionnée : ${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex} (${target.pitch}, ${target.beats} temps). Clique sur "Supprimer la note sélectionnée" pour la retirer.`);
@@ -1022,7 +1034,7 @@
       }
 
       if (target.tupletGroup) {
-        fillTripletSlot(trackIndex, staffIndex, measureIndex, localIndex, pitch);
+        fillTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, pitch);
         return;
       }
 
@@ -1047,7 +1059,7 @@
         return;
       }
 
-      const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+      const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
       const isLastMeasure = measureIndex === measures.length - 1;
       if (isLastMeasure) {
         log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
@@ -1089,8 +1101,8 @@
     // saisie. Même structure que placeNoteAt (y compris le débordement "cas 3" sur la mesure
     // suivante), avec la corde+frette à la place d'une hauteur nommée. Pas de triolets ici — gérés
     // séparément par placeTabTripletGroupAt/fillTabTripletSlot, comme côté score.
-    function placeTabNoteAt(trackIndex, staffIndex, measureIndex, localIndex, duration, string, fret) {
-      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function placeTabNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, duration, string, fret) {
+      const currentMeasure = tracks[trackIndex] && tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       if (!currentMeasure) {
         log(`Piste ${trackIndex} / mesure ${measureIndex} introuvable dans le modèle local.`);
         return;
@@ -1136,7 +1148,7 @@
         return;
       }
 
-      const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+      const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
       const isLastMeasure = measureIndex === measures.length - 1;
       if (isLastMeasure) {
         log(`REJET — durée ${duration} dépasse ce qui reste (${availableInMeasure}) en fin de la DERNIÈRE mesure (${tracks[trackIndex].name}).`);
@@ -1175,8 +1187,8 @@
     // Triolet tab — même structure que placeTripletGroupAt/fillTripletSlot côté score, avec
     // corde+frette à la place d'une hauteur. Pas de débordement inter-mesure pour un triolet, comme
     // côté score.
-    function placeTabTripletGroupAt(trackIndex, staffIndex, measureIndex, localIndex, baseDuration, string, fret) {
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function placeTabTripletGroupAt(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, baseDuration, string, fret) {
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       if (!target || target.type !== 'rest') {
         log('Un triolet ne peut être placé que sur un silence dans ce spike.');
@@ -1208,8 +1220,8 @@
     // Remplit (ou re-choisit la corde/frette d')un élément de triolet — silence encore vide OU note
     // déjà posée qu'on veut corriger. Préserve systématiquement les métadonnées du groupe
     // (tupletGroup/tupletId/tupletWrittenBeats/beats), seules corde+frette changent.
-    function fillTabTripletSlot(trackIndex, staffIndex, measureIndex, localIndex, string, fret) {
-      const m = tracks[trackIndex].staves[staffIndex].voices[0].measures[measureIndex];
+    function fillTabTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, localIndex, string, fret) {
+      const m = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures[measureIndex];
       const target = m[localIndex];
       m[localIndex] = { type: 'note', string, fret, beats: target.beats, tupletWrittenBeats: target.tupletWrittenBeats, tupletGroup: target.tupletGroup, tupletId: target.tupletId };
       log(`Note de triolet tab (${tracks[trackIndex].name}, mesure ${measureIndex}, index ${localIndex}) → corde ${string}, case ${fret}.`);
@@ -1563,6 +1575,15 @@
           staffIndex = beat.voice.bar.staff.index;
         }
       } catch (e) { /* staffIndex reste 0 */ }
+      let voiceIndex = 0;
+      try {
+        // Voice.index (doc officielle, reference/model) : index de la voix AU SEIN de la mesure —
+        // préparé pour la saisie multi-voix (batterie notamment), une seule voix utilisée partout
+        // pour l'instant donc toujours 0 en pratique aujourd'hui.
+        if (beat.voice && typeof beat.voice.index === 'number') {
+          voiceIndex = beat.voice.index;
+        }
+      } catch (e) { /* voiceIndex reste 0 */ }
 
       const geometricMatch = resolveTrackAndBeatManually(lastPointerX, lastPointerY, measureIndex);
       let effectiveBeat = beat;
@@ -1570,6 +1591,9 @@
         log(`[diag] DÉSACCORD piste : natif (beatMouseUp)=${trackIndex}, géométrique (position réelle du clic)=${geometricMatch.trackIndex} → on retient la valeur géométrique, plus fiable sur un silence vide.`);
         trackIndex = geometricMatch.trackIndex;
         staffIndex = geometricMatch.staffIndex;
+        // La résolution géométrique ne connaît pour l'instant qu'une seule voix par portée — sûr
+        // aujourd'hui puisque tracks[] n'a encore que des portées à une voix.
+        voiceIndex = 0;
         if (geometricMatch.beat) {
           effectiveBeat = geometricMatch.beat;
           log(`[diag] Battement local recalculé pour la bonne piste (findBeatAtPos a fonctionné) : nouvel index=${effectiveBeat.index}.`);
@@ -1577,23 +1601,23 @@
           log(`[diag] ATTENTION: findBeatAtPos indisponible sur cette piste — on garde beat.index=${beat.index} de la piste d'origine, risque de décalage si les pistes ont des structures différentes.`);
         }
       }
-      log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex}, portée=${staffIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
+      log(`[diag] beat.index=${effectiveBeat.index}, mesure=${measureIndex}, piste=${trackIndex}, portée=${staffIndex}, voix=${voiceIndex} (${tracks[trackIndex] ? tracks[trackIndex].name : '???'})`);
 
-      if (!tracks[trackIndex] || !tracks[trackIndex].staves[staffIndex]) {
-        // Piste (ou portée) hors de notre tableau tracks[] — typiquement une piste de test ajoutée
-        // pour valider un rendu (grand staff, percussion...), pas encore interactive. On
+      if (!tracks[trackIndex] || !tracks[trackIndex].staves[staffIndex] || !tracks[trackIndex].staves[staffIndex].voices[voiceIndex]) {
+        // Piste (ou portée, ou voix) hors de notre tableau tracks[] — typiquement une piste de test
+        // ajoutée pour valider un rendu (grand staff, percussion...), pas encore interactive. On
         // désélectionne proprement (cohérent avec "clic ailleurs") et on ignore, sans toucher au
         // modèle.
         deselectNote('clic sur une piste de test, rendu seul (non interactive)');
         deselectMeasure('clic sur une piste de test, rendu seul (non interactive)');
-        log(`Piste ${trackIndex} / portée ${staffIndex} hors de notre modèle interactif (piste de test, rendu seul) — clic ignoré.`);
+        log(`Piste ${trackIndex} / portée ${staffIndex} / voix ${voiceIndex} hors de notre modèle interactif (piste de test, rendu seul) — clic ignoré.`);
         return;
       }
 
       if (tracks[trackIndex].staves[staffIndex].staffType === 'tabs') {
-        const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+        const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
         const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
-        const clickedPos = { trackIndex, staffIndex, measureIndex, localIndex: effectiveBeat.index };
+        const clickedPos = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index };
         if (!isSameSelection(selectedNote, clickedPos)) {
           deselectNote('clic sur une cible différente de la sélection actuelle');
         }
@@ -1625,7 +1649,7 @@
             initialDuration: clickedTarget.beats,
             clientX: lastPointerClientX,
             clientY: lastPointerClientY,
-            onConfirm: (fret) => fillTabTripletSlot(trackIndex, staffIndex, measureIndex, effectiveBeat.index, targetString, fret)
+            onConfirm: (fret) => fillTabTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, targetString, fret)
           });
         } else if (tripletActive && clickedTarget && clickedTarget.type === 'rest') {
           log(`[diag tab] corde détectée=${targetString}/${stringCount}, cible=nouveau triolet (silence).`);
@@ -1637,7 +1661,7 @@
             initialDuration: selectedDuration,
             clientX: lastPointerClientX,
             clientY: lastPointerClientY,
-            onConfirm: (fret, duration) => placeTabTripletGroupAt(trackIndex, staffIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
+            onConfirm: (fret, duration) => placeTabTripletGroupAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
           });
         } else {
           const existingNote = clickedTarget && clickedTarget.type === 'note' ? clickedTarget : null;
@@ -1650,7 +1674,7 @@
             initialDuration: existingNote ? existingNote.beats : selectedDuration,
             clientX: lastPointerClientX,
             clientY: lastPointerClientY,
-            onConfirm: (fret, duration) => placeTabNoteAt(trackIndex, staffIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
+            onConfirm: (fret, duration) => placeTabNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, duration, targetString, fret)
           });
         }
         return;
@@ -1666,24 +1690,24 @@
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
 
-      const measures = tracks[trackIndex].staves[staffIndex].voices[0].measures;
+      const measures = tracks[trackIndex].staves[staffIndex].voices[voiceIndex].measures;
       const clickedTarget = measures && measures[measureIndex] && measures[measureIndex][effectiveBeat.index];
       const tripletActive = document.getElementById('tripletToggle').checked;
 
-      const clickedPos = { trackIndex, staffIndex, measureIndex, localIndex: effectiveBeat.index };
+      const clickedPos = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index };
       if (!isSameSelection(selectedNote, clickedPos)) {
         deselectNote('clic sur une cible différente de la sélection actuelle');
       }
       deselectMeasure('clic sur la portée pour la saisie de note — note et mesure ne peuvent pas être sélectionnées en même temps');
 
-      pendingScrollCompensation = { trackIndex, staffIndex, measureIndex, localIndex: effectiveBeat.index, targetX: lastPointerX, targetY: lastPointerY };
+      pendingScrollCompensation = { trackIndex, staffIndex, voiceIndex, measureIndex, localIndex: effectiveBeat.index, targetX: lastPointerX, targetY: lastPointerY };
 
       if (clickedTarget && clickedTarget.type === 'rest' && clickedTarget.tupletGroup) {
-        fillTripletSlot(trackIndex, staffIndex, measureIndex, effectiveBeat.index, pitch);
+        fillTripletSlot(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, pitch);
       } else if (tripletActive && clickedTarget && clickedTarget.type === 'rest') {
-        placeTripletGroupAt(trackIndex, staffIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch);
+        placeTripletGroupAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch);
       } else {
-        placeNoteAt(trackIndex, staffIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch, effectiveBeat);
+        placeNoteAt(trackIndex, staffIndex, voiceIndex, measureIndex, effectiveBeat.index, selectedDuration, pitch, effectiveBeat);
       }
     });
 
