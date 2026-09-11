@@ -1674,7 +1674,7 @@
           break;
         }
       }
-      return { trackIndex, staffIndex, beat: matchedBeat };
+      return { trackIndex, staffIndex, voiceIndex: matchedBeat && matchedBeat.voice ? matchedBeat.voice.index : 0, beat: matchedBeat };
     }
 
     api.beatMouseUp.on((beat) => {
@@ -1734,9 +1734,10 @@
         log(`[diag] DÉSACCORD piste : natif (beatMouseUp)=${trackIndex}, géométrique (position réelle du clic)=${geometricMatch.trackIndex} → on retient la valeur géométrique, plus fiable sur un silence vide.`);
         trackIndex = geometricMatch.trackIndex;
         staffIndex = geometricMatch.staffIndex;
-        // La résolution géométrique ne connaît pour l'instant qu'une seule voix par portée — sûr
-        // aujourd'hui puisque tracks[] n'a encore que des portées à une voix.
-        voiceIndex = 0;
+        // Utilise la voix RÉELLE du battement trouvé (pas un 0 forcé) — sinon, dès qu'une portée a
+        // plusieurs voix de longueurs différentes, on se retrouve à chercher un index dans le
+        // mauvais tableau ("Battement introuvable" observé en pratique sur le grand staff).
+        voiceIndex = geometricMatch.voiceIndex;
         if (geometricMatch.beat) {
           effectiveBeat = geometricMatch.beat;
           log(`[diag] Battement local recalculé pour la bonne piste (findBeatAtPos a fonctionné) : nouvel index=${effectiveBeat.index}.`);
