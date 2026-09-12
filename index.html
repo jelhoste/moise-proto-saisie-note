@@ -438,7 +438,15 @@
         const restTokens = rests > 0 ? ' ' + Array(rests).fill('r').join(' ') : '';
         bars.push(`:16 ${chunk.join(' ')}${restTokens}`);
       }
-      return `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
+      const percussionTrack = `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
+
+      // Piste de test clés d'ut (alto = C3, ténor = C4) — pas encore interactive. Une portée par
+      // clé, les 5 lignes écrites de bas en haut (théorie standard, pas spécifique à alphaTab) :
+      // alto (C3) : Fa3 La3 Do4 Mi4 Sol4 (ligne du haut = Sol4) ; ténor (C4) : Ré3 Fa3 La3 Do4 Mi4
+      // (ligne du haut = Mi4). Croches pour que les 5 notes + silences tiennent dans une mesure.
+      const cClefsTrack = `\\track "Clés d'ut (test rendu)" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\clef C3 \\ts 4 4 :8 F3 A3 C4 E4 G4 r r r \\staff{score} \\tuning piano \\clef C4 \\ts 4 4 :8 D3 F3 A3 C4 E4 r r r`;
+
+      return `${percussionTrack} ${cClefsTrack}`;
     }
 
     const element = document.getElementById('alphaTab');
