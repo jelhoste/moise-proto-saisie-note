@@ -240,7 +240,14 @@
             ['CrashHigh', 49], ['RideMiddle', 51], ['RideBell', 53], ['TomHigh', 48]
           ],
           voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }]
-        }] }
+        }] },
+        // Clés d'ut : une piste, deux portées — alto (C3, utilisée par l'alto/viole) et ténor (C4,
+        // utilisée par violoncelle/basson/trombone en registre aigu). Réutilise directement
+        // l'infrastructure clé→hauteur déjà générique (CLEF_TOP_LINE_PITCH), comme pour la clé de fa.
+        { name: 'Clés d\'ut', instrument: 'acousticgrandpiano', staves: [
+          { staffType: 'score', tuning: 'piano', clef: 'C3', voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] },
+          { staffType: 'score', tuning: 'piano', clef: 'C4', voices: [{ measures: freshMeasures() }, { measures: freshMeasures() }] }
+        ] }
       ];
     }
     let tracks = makeDefaultTracks();
@@ -438,15 +445,7 @@
         const restTokens = rests > 0 ? ' ' + Array(rests).fill('r').join(' ') : '';
         bars.push(`:16 ${chunk.join(' ')}${restTokens}`);
       }
-      const percussionTrack = `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
-
-      // Piste de test clés d'ut (alto = C3, ténor = C4) — pas encore interactive. Une portée par
-      // clé, les 5 lignes écrites de bas en haut (théorie standard, pas spécifique à alphaTab) :
-      // alto (C3) : Fa3 La3 Do4 Mi4 Sol4 (ligne du haut = Sol4) ; ténor (C4) : Ré3 Fa3 La3 Do4 Mi4
-      // (ligne du haut = Mi4). Croches pour que les 5 notes + silences tiennent dans une mesure.
-      const cClefsTrack = `\\track "Clés d'ut (test rendu)" \\staff{score} \\tuning piano \\instrument acousticgrandpiano \\clef C3 \\ts 4 4 :8 F3 A3 C4 E4 G4 r r r \\staff{score} \\tuning piano \\clef C4 \\ts 4 4 :8 D3 F3 A3 C4 E4 r r r`;
-
-      return `${percussionTrack} ${cClefsTrack}`;
+      return `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
     }
 
     const element = document.getElementById('alphaTab');
@@ -531,9 +530,9 @@
     }
     const DIATONIC_RANGE = buildDiatonicRange(1, 8);
     const CLEF_TOP_LINE_PITCH = {
-      'F4': 'A3' // clé de fa : la ligne du haut correspond à La3, pas Fa5.
-      // Autres clés (alto, ténor...) non gérées dans ce spike — seules \clef null (sol, défaut) et
-      // \clef F4 (fa) sont utilisées actuellement.
+      'F4': 'A3', // clé de fa : la ligne du haut correspond à La3, pas Fa5.
+      'C3': 'G4', // clé d'alto (ut 3e ligne) : ligne du haut = Sol4.
+      'C4': 'E4'  // clé de ténor (ut 4e ligne) : ligne du haut = Mi4.
     };
 
     function noteAtStep(stepIndex, anchorPitch) {
