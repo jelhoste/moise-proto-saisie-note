@@ -445,7 +445,14 @@
         const restTokens = rests > 0 ? ' ' + Array(rests).fill('r').join(' ') : '';
         bars.push(`:16 ${chunk.join(' ')}${restTokens}`);
       }
-      return `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
+      const percussionTrack = `\\track "Batterie (test rendu — tous les sons)" \\instrument percussion \\clef neutral ${defs} \\ts 4 4 ${bars.join(' | ')}`;
+
+      // Test rendu notation slash : simple drapeau d'affichage sur une portée score OU tabs déjà
+      // existante (pas une nouvelle structure de données) — les notes dessous restent des notes
+      // normales, seul l'affichage change (losanges au lieu de têtes de note classiques).
+      const slashTrack = `\\track "Slash (test rendu)" \\staff{score slash} \\tuning piano \\instrument acousticgrandpiano C4 D4 E4 F4 | C4 D4 E4 F4 \\track "Slash tab (test rendu)" \\staff{tabs slash} \\tuning E4 B3 G3 D3 A2 E2 \\instrument acousticguitarsteel 3.3 4.3 5.3 5.5 | 3.3 4.3 5.3 5.5`;
+
+      return `${percussionTrack} ${slashTrack}`;
     }
 
     const element = document.getElementById('alphaTab');
