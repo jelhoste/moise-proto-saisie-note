@@ -109,6 +109,9 @@
     <button class="scoreVoiceBtn active" data-voice="0">Voix 1</button>
     <button class="scoreVoiceBtn" data-voice="1">Voix 2</button>
   </div>
+  <div style="margin-top:10px;">
+    <label style="font-size:13px;"><input type="checkbox" id="guitareSlashToggle"> Notation slash (Guitare) — affichage rythmique en losanges, plutôt que les notes exactes</label>
+  </div>
   <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
   <button id="deleteTupletBtn">Supprimer le triolet entier</button>
@@ -220,7 +223,7 @@
         // Piste de test pour valider le rendu d'une tablature à côté de portées classiques — pas
         // interactive pour l'instant (nombre de lignes différent d'une portée à 5 lignes, saisie en
         // corde+frette plutôt qu'en hauteur : mécanique volontairement pas encore adaptée).
-        { name: 'Guitare', instrument: 'acousticguitarsteel', staves: [{ staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', clef: null, voices: [{ measures: freshMeasures() }] }] },
+        { name: 'Guitare', instrument: 'acousticguitarsteel', staves: [{ staffType: 'tabs', tuning: 'E4 B3 G3 D3 A2 E2', clef: null, slash: false, voices: [{ measures: freshMeasures() }] }] },
         // Grand staff : une piste, deux portées (aiguë + grave/clé de fa) — première vraie piste
         // multi-portées interactive, ce qui teste réellement l'infrastructure staffIndex des
         // étapes 1-3.
@@ -398,7 +401,8 @@
           // \tuning absent pour une portée sans hauteur (percussion) — pas de mot-clé pertinent.
           const tuningToken = s.tuning ? ` \\tuning ${buildTuningToken(s)}` : '';
           const articulationTokens = (s.articulations || []).map(([name, num]) => ` \\articulation ${name} ${num}`).join('');
-          return `\\staff{${s.staffType}}${tuningToken}${instrumentToken}${clefToken}${articulationTokens} \\ts 4 4 ${voiceBlocks.join(' ')}`;
+          const staffTypeToken = s.slash ? `${s.staffType} slash` : s.staffType;
+          return `\\staff{${staffTypeToken}}${tuningToken}${instrumentToken}${clefToken}${articulationTokens} \\ts 4 4 ${voiceBlocks.join(' ')}`;
         });
         return `\\track "${t.name}" ${staffBlocks.join(' ')}`;
       });
@@ -2034,6 +2038,12 @@
         btn.classList.add('active');
         log(`Voix (portée classique) sélectionnée : voix ${selectedScoreVoiceIndex + 1}.`);
       });
+    });
+
+    document.getElementById('guitareSlashToggle').addEventListener('change', (e) => {
+      tracks[2].staves[0].slash = e.target.checked;
+      log(`Notation slash (Guitare) : ${e.target.checked ? 'activée' : 'désactivée'}.`);
+      render();
     });
 
     document.getElementById('testTexBtn').addEventListener('click', () => {
