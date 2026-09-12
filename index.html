@@ -564,12 +564,12 @@
       return Math.max(1, Math.min(stringCount, Math.round(raw)));
     }
 
-    function pitchFromY(y, staffBounds, clef) {
+    function pitchFromY(y, staffBounds, clef, slashActive) {
       if (!staffBounds || !staffBounds.h) return 'C4';
       const anchorPitch = (clef && CLEF_TOP_LINE_PITCH[clef]) || 'F5';
       const stepPerUnit = 8 / staffBounds.h;
       let stepIndex = Math.round((y - staffBounds.y) * stepPerUnit);
-      log(`[diag pitch] clic y=${Math.round(y)}, portée bounds.y=${Math.round(staffBounds.y)}, bounds.h=${Math.round(staffBounds.h)}, clef=${clef || 'sol (défaut)'}, ancre=${anchorPitch}, step brut=${stepIndex}`);
+      log(`[diag pitch] clic y=${Math.round(y)}, portée bounds.y=${Math.round(staffBounds.y)}, bounds.h=${Math.round(staffBounds.h)}, clef=${clef || 'sol (défaut)'}, ancre=${anchorPitch}, step brut=${stepIndex}, slash=${slashActive ? 'ACTIF' : 'inactif'}`);
       // Borne raisonnable : au-delà d'environ 6 lignes supplémentaires de chaque côté, on bloque —
       // un clic imprécis (notamment près de la limite entre deux portées empilées) ne doit jamais
       // produire une hauteur absurdement extrême dont la hampe démesurée empiéterait visuellement
@@ -1873,7 +1873,7 @@
       const bounds = lookup && lookup.findBeat ? lookup.findBeat(effectiveBeat) : null;
       if (bounds) {
         const b = bounds.visualBounds || bounds.realBounds;
-        pitch = pitchFromY(lastPointerY, b, tracks[trackIndex].staves[staffIndex].clef);
+        pitch = pitchFromY(lastPointerY, b, tracks[trackIndex].staves[staffIndex].clef, tracks[trackIndex].staves[staffIndex].slash);
       } else {
         log('findBeat() n\'a pas retourné de bounds pour ce battement — hauteur par défaut C4 utilisée.');
       }
