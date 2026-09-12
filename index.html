@@ -110,7 +110,9 @@
     <button class="scoreVoiceBtn" data-voice="1">Voix 2</button>
   </div>
   <div style="margin-top:10px;">
-    <label style="font-size:13px;"><input type="checkbox" id="guitareSlashToggle"> Notation slash (Guitare) — affichage rythmique en losanges, plutôt que les notes exactes</label>
+    <span class="paletteLabel">Notation slash — affichage rythmique en losanges (portée classique ou tab) : </span>
+    <select id="slashStaffSelect"></select>
+    <label style="font-size:13px; margin-left:6px;"><input type="checkbox" id="slashToggle"> activer sur cette portée</label>
   </div>
   <button id="resetBtn">Réinitialiser les mesures</button>
   <button id="deleteBtn">Supprimer la note sélectionnée</button>
@@ -2040,11 +2042,38 @@
       });
     });
 
-    document.getElementById('guitareSlashToggle').addEventListener('change', (e) => {
-      tracks[2].staves[0].slash = e.target.checked;
-      log(`Notation slash (Guitare) : ${e.target.checked ? 'activée' : 'désactivée'}.`);
+    const slashStaffSelect = document.getElementById('slashStaffSelect');
+    const slashToggle = document.getElementById('slashToggle');
+
+    function populateSlashStaffSelect() {
+      slashStaffSelect.innerHTML = '';
+      tracks.forEach((t, ti) => {
+        t.staves.forEach((s, si) => {
+          const opt = document.createElement('option');
+          opt.value = `${ti}:${si}`;
+          opt.textContent = t.staves.length > 1 ? `${t.name} — portée ${si + 1}` : t.name;
+          slashStaffSelect.appendChild(opt);
+        });
+      });
+      syncSlashToggleToSelection();
+    }
+
+    function syncSlashToggleToSelection() {
+      const [ti, si] = slashStaffSelect.value.split(':').map(Number);
+      slashToggle.checked = !!(tracks[ti] && tracks[ti].staves[si] && tracks[ti].staves[si].slash);
+    }
+
+    slashStaffSelect.addEventListener('change', syncSlashToggleToSelection);
+
+    slashToggle.addEventListener('change', () => {
+      const [ti, si] = slashStaffSelect.value.split(':').map(Number);
+      tracks[ti].staves[si].slash = slashToggle.checked;
+      const label = tracks[ti].staves.length > 1 ? `${tracks[ti].name} portée ${si + 1}` : tracks[ti].name;
+      log(`Notation slash (${label}) : ${slashToggle.checked ? 'activée' : 'désactivée'}.`);
       render();
     });
+
+    populateSlashStaffSelect();
 
     document.getElementById('testTexBtn').addEventListener('click', () => {
       const customTex = document.getElementById('texInput').value;
